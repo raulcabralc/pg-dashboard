@@ -2,7 +2,11 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { listRelations, listTables } = require("../backend/src/metadata");
+const {
+  getCrudMetadata,
+  listRelations,
+  listTables,
+} = require("../backend/src/metadata");
 
 test("listRelations includes tables, views and materialized views", async () => {
   const pool = {
@@ -48,4 +52,61 @@ test("listTables keeps returning only relation names", async () => {
     "petsPorTutor",
     "petsResumo",
   ]);
+});
+
+test("getCrudMetadata maps postgres enum values", async () => {
+  const pool = {
+    query: async (sql) => {
+      if (sql.includes("FROM pg_catalog.pg_class")) {
+        return {
+          rows: [{ tableName: "pets", relationType: "table" }],
+        };
+      }
+
+      if (sql.includes("FROM information_schema.columns")) {
+        return {
+          rows: [
+            {
+              columnName: "status",
+              dataType: "USER-DEFINED",
+              udtSchema: "public",
+              udtName: "pet_status",
+              isNullable: "NO",
+              columnDefault: null,
+              isIdentity: "NO",
+              isGenerated: "NEVER",
+            },
+          ],
+        };
+      }
+
+      if (sql.includes("FROM information_schema.table_constraints")) {
+        return { rows: [] };
+      }
+
+      if (sql.includes("FROM pg_catalog.pg_type")) {
+        return {
+          rows: [
+            {
+              enumSchema: "public",
+              enumName: "pet_status",
+              enumValue: "ativo",
+            },
+            {
+              enumSchema: "public",
+              enumName: "pet_status",
+              enumValue: "inativo",
+            },
+          ],
+        };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  const metadata = await getCrudMetadata(pool, "pets");
+
+  assert.equal(metadata.columns[0].isEnum, true);
+  assert.deepEqual(metadata.columns[0].enumValues, ["ativo", "inativo"]);
 });

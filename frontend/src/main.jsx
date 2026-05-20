@@ -79,16 +79,13 @@ function shouldSelectColumnByDefault(columnName) {
     "updated",
     "updatedat",
   ]);
-  const auditColumnPrefixes = [
-    "atualizado",
-    "created",
-    "criado",
-    "updated",
-  ];
+  const auditColumnPrefixes = ["atualizado", "created", "criado", "updated"];
 
   return (
     !auditColumnNames.has(normalizedColumnName) &&
-    !auditColumnPrefixes.some((prefix) => normalizedColumnName.startsWith(prefix))
+    !auditColumnPrefixes.some((prefix) =>
+      normalizedColumnName.startsWith(prefix),
+    )
   );
 }
 
@@ -378,7 +375,10 @@ function formatDateTimeInputValue(value) {
     );
 
     if (match) {
-      return `${match[1]}T${match[2]}`;
+      const [, datePart, timePart] = match;
+      const [year, month, day] = datePart.split("-");
+
+      return `${day}/${month}/${year}T${timePart}`;
     }
   }
 
@@ -388,7 +388,10 @@ function formatDateTimeInputValue(value) {
     return "";
   }
 
-  return `${formatDateInputValue(date)}T${[
+  const isoDate = formatDateInputValue(date);
+  const [year, month, day] = isoDate.split("-");
+
+  return `${day}/${month}/${year}T${[
     padDatePart(date.getHours()),
     padDatePart(date.getMinutes()),
   ].join(":")}`;
@@ -414,6 +417,83 @@ function formatCrudInputValue(value, column) {
   return value;
 }
 
+function splitDateTimeInputValue(value) {
+  const [datePart = "", timePart = ""] = String(value || "").split("T");
+
+  return {
+    date: formatMaskedDateInput(datePart),
+    time: formatMaskedTimeInput(timePart),
+  };
+}
+
+function mergeDateTimeInputValue(currentValue, partName, nextPartValue) {
+  const currentParts = splitDateTimeInputValue(currentValue);
+  const nextParts = {
+    ...currentParts,
+    [partName]: nextPartValue,
+  };
+
+  if (!nextParts.date && !nextParts.time) {
+    return "";
+  }
+
+  return `${nextParts.date || ""}T${nextParts.time || ""}`;
+}
+
+function formatMaskedDateInput(value) {
+  const digits = String(value || "")
+    .replace(/\D/g, "")
+    .slice(0, 8);
+  const day = digits.slice(0, 2);
+  const month = digits.slice(2, 4);
+  const year = digits.slice(4, 8);
+
+  return [day, month, year].filter(Boolean).join("/");
+}
+
+function formatMaskedTimeInput(value) {
+  const digits = String(value || "")
+    .replace(/\D/g, "")
+    .slice(0, 4);
+  let hour = digits.slice(0, 2);
+  let minute = digits.slice(2, 4);
+
+  if (hour.length === 2 && Number(hour) > 23) {
+    hour = "23";
+  }
+
+  if (minute.length === 2 && Number(minute) > 59) {
+    minute = "59";
+  }
+
+  return [hour, minute].filter(Boolean).join(":");
+}
+
+function dateMaskToIsoDate(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+
+  if (digits.length !== 8) {
+    return "";
+  }
+
+  const day = digits.slice(0, 2);
+  const month = digits.slice(2, 4);
+  const year = digits.slice(4, 8);
+
+  return `${year}-${month}-${day}`;
+}
+
+function timestampMaskToIsoValue(value) {
+  const { date, time } = splitDateTimeInputValue(value);
+  const isoDate = dateMaskToIsoDate(date);
+
+  if (!isoDate || time.length !== 5) {
+    return value;
+  }
+
+  return `${isoDate}T${time}`;
+}
+
 function normalizeCrudValue(value, column, mode) {
   if (value === "" && column.isNullable) {
     return null;
@@ -421,6 +501,14 @@ function normalizeCrudValue(value, column, mode) {
 
   if (value === "" && mode === "create" && column.hasDefault) {
     return undefined;
+  }
+
+  if (value === "" && column.isEnum && column.hasDefault) {
+    return undefined;
+  }
+
+  if (column.dataType?.startsWith("timestamp")) {
+    return timestampMaskToIsoValue(value);
   }
 
   return value;
@@ -607,10 +695,12 @@ function App() {
   const [isCrudDrawerClosing, setIsCrudDrawerClosing] = useState(false);
   const [isSavingRecord, setIsSavingRecord] = useState(false);
   const [isLoadingRecord, setIsLoadingRecord] = useState(false);
+  const [isQueryScrolledToBottom, setIsQueryScrolledToBottom] = useState(true);
   const copiedTimeoutRef = useRef(null);
   const hoverTimeoutRef = useRef(null);
   const queryTransitionTimeoutRef = useRef(null);
   const crudDrawerCloseTimeoutRef = useRef(null);
+  const tableWrapRef = useRef(null);
 
   const selectedColumns = useMemo(
     () =>
@@ -644,6 +734,14 @@ function App() {
 
   function getColumnValueOptionsKey(tableName, columnName) {
     return `${tableName}:${columnName}`;
+  }
+
+  function updateQueryFadeState(element) {
+    const hasVerticalScroll = element.scrollHeight > element.clientHeight + 2;
+    const isAtBottom =
+      element.scrollTop + element.clientHeight >= element.scrollHeight - 2;
+
+    setIsQueryScrolledToBottom(!hasVerticalScroll || isAtBottom);
   }
 
   useEffect(() => {
@@ -832,6 +930,16 @@ function App() {
     });
   }, [filters, columns, selectedTableName]);
 
+  useEffect(() => {
+    const frameId = window.requestAnimationFrame(() => {
+      if (tableWrapRef.current) {
+        updateQueryFadeState(tableWrapRef.current);
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [rows, selectedColumnNames, hasRunReport, isLoading]);
+
   function updateFilterValue(index, value) {
     setFilters((currentFilters) =>
       currentFilters.map((filter, filterIndex) => {
@@ -1017,7 +1125,11 @@ function App() {
       writableCrudColumns
         .map((column) => [
           column.columnName,
-          normalizeCrudValue(crudDrawer.values[column.columnName], column, mode),
+          normalizeCrudValue(
+            crudDrawer.values[column.columnName],
+            column,
+            mode,
+          ),
         ])
         .filter(([, value]) => value !== undefined),
     );
@@ -1043,6 +1155,27 @@ function App() {
 
     if (missingColumn) {
       toast.error(`${missingColumn.columnName} is required.`);
+      return false;
+    }
+
+    const incompleteTimestampColumn = writableCrudColumns.find((column) => {
+      if (!column.dataType?.startsWith("timestamp")) {
+        return false;
+      }
+
+      const value = crudDrawer.values[column.columnName];
+
+      if (!value) {
+        return false;
+      }
+
+      const { date, time } = splitDateTimeInputValue(value);
+
+      return date.length !== 10 || time.length !== 5;
+    });
+
+    if (incompleteTimestampColumn) {
+      toast.error(`${incompleteTimestampColumn.columnName} needs date and time.`);
       return false;
     }
 
@@ -1081,7 +1214,8 @@ function App() {
             isDelete
               ? { primaryKey: crudDrawer.primaryKey }
               : {
-                  primaryKey: mode === "edit" ? crudDrawer.primaryKey : undefined,
+                  primaryKey:
+                    mode === "edit" ? crudDrawer.primaryKey : undefined,
                   values: buildCrudValues(mode),
                 },
           ),
@@ -1475,14 +1609,15 @@ function App() {
 
         <section className="workspace">
           <div
-            className={
-              [
-                "tableWrap",
-                isQueryTransitioning ? "tableWrapTransitioning" : "",
-              ]
-                .filter(Boolean)
-                .join(" ")
-            }
+            ref={tableWrapRef}
+            className={[
+              "tableWrap",
+              isQueryScrolledToBottom ? "tableWrapAtBottom" : "",
+              isQueryTransitioning ? "tableWrapTransitioning" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            onScroll={(event) => updateQueryFadeState(event.currentTarget)}
           >
             {!hasRunReport ? (
               <div className="emptyQueryState">
@@ -1518,17 +1653,19 @@ function App() {
                   );
 
                   return (
-                  <div
-                    className={
-                      isSelected
-                        ? "dataGridCell dataGridHeadCell"
-                        : "dataGridCell dataGridHeadCell dataGridCellHidden"
-                    }
-                    key={column.columnName}
-                    role="columnheader"
-                  >
-                    <span className="dataGridContent">{column.columnName}</span>
-                  </div>
+                    <div
+                      className={
+                        isSelected
+                          ? "dataGridCell dataGridHeadCell"
+                          : "dataGridCell dataGridHeadCell dataGridCellHidden"
+                      }
+                      key={column.columnName}
+                      role="columnheader"
+                    >
+                      <span className="dataGridContent">
+                        {column.columnName}
+                      </span>
+                    </div>
                   );
                 })}
                 <div
@@ -1575,7 +1712,9 @@ function App() {
                                   type="button"
                                   className="iconButton dangerButton"
                                   onClick={() => openDeleteDrawer(row)}
-                                  disabled={!crudMetadata?.canDelete || !primaryKey}
+                                  disabled={
+                                    !crudMetadata?.canDelete || !primaryKey
+                                  }
                                   title="Delete row"
                                 >
                                   <Trash2 size={14} />
@@ -1645,7 +1784,8 @@ function App() {
                               Copied
                             </span>
                           ) : null}
-                          {hoveredCell?.id === cellId && copiedCellId !== cellId ? (
+                          {hoveredCell?.id === cellId &&
+                          copiedCellId !== cellId ? (
                             <span className="cellTooltip">
                               {hoveredCell.text}
                             </span>
@@ -1681,7 +1821,9 @@ function App() {
         >
           <form
             className={
-              isCrudDrawerClosing ? "crudDrawer crudDrawerClosing" : "crudDrawer"
+              isCrudDrawerClosing
+                ? "crudDrawer crudDrawerClosing"
+                : "crudDrawer"
             }
             onSubmit={submitCrud}
           >
@@ -1727,6 +1869,24 @@ function App() {
                   const value = crudDrawer.values[column.columnName] ?? "";
                   const isBoolean = column.dataType === "boolean";
                   const isLongText = column.dataType === "text";
+                  const isTimestamp = column.dataType?.startsWith("timestamp");
+                  const dateTimeParts = splitDateTimeInputValue(value);
+                  const enumOptions = column.isEnum
+                    ? [
+                        ...(column.isNullable || column.hasDefault
+                          ? [
+                              {
+                                value: "",
+                                label: column.hasDefault ? "Default" : "Empty",
+                              },
+                            ]
+                          : []),
+                        ...column.enumValues.map((enumValue) => ({
+                          value: enumValue,
+                          label: enumValue,
+                        })),
+                      ]
+                    : [];
 
                   return (
                     <label className="crudField" key={column.columnName}>
@@ -1736,10 +1896,24 @@ function App() {
                           <strong>*</strong>
                         ) : null}
                       </span>
-                      {isBoolean ? (
+                      {column.isEnum ? (
+                        <CustomDropdown
+                          ariaLabel={`${column.columnName} value`}
+                          value={value}
+                          options={enumOptions}
+                          onChange={(nextValue) =>
+                            updateCrudValue(column.columnName, nextValue)
+                          }
+                          placeholder="Select value"
+                        />
+                      ) : isBoolean ? (
                         <button
                           type="button"
-                          className={value === true || value === "true" ? "toggleButton toggleButtonOn" : "toggleButton"}
+                          className={
+                            value === true || value === "true"
+                              ? "toggleButton toggleButtonOn"
+                              : "toggleButton"
+                          }
                           onClick={() =>
                             updateCrudValue(
                               column.columnName,
@@ -1747,13 +1921,61 @@ function App() {
                             )
                           }
                         >
-                          {value === true || value === "true" ? "True" : "False"}
+                          {value === true || value === "true"
+                            ? "True"
+                            : "False"}
                         </button>
+                      ) : isTimestamp ? (
+                        <div className="dateTimeField">
+                          <label>
+                            <span>Date</span>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              maxLength={10}
+                              placeholder="dd/mm/yyyy"
+                              value={dateTimeParts.date}
+                              onChange={(event) =>
+                                updateCrudValue(
+                                  column.columnName,
+                                  mergeDateTimeInputValue(
+                                    value,
+                                    "date",
+                                    formatMaskedDateInput(event.target.value),
+                                  ),
+                                )
+                              }
+                            />
+                          </label>
+                          <label>
+                            <span>Time</span>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              maxLength={5}
+                              placeholder="HH:mm"
+                              value={dateTimeParts.time}
+                              onChange={(event) =>
+                                updateCrudValue(
+                                  column.columnName,
+                                  mergeDateTimeInputValue(
+                                    value,
+                                    "time",
+                                    formatMaskedTimeInput(event.target.value),
+                                  ),
+                                )
+                              }
+                            />
+                          </label>
+                        </div>
                       ) : isLongText ? (
                         <textarea
                           value={value}
                           onChange={(event) =>
-                            updateCrudValue(column.columnName, event.target.value)
+                            updateCrudValue(
+                              column.columnName,
+                              event.target.value,
+                            )
                           }
                           placeholder={column.hasDefault ? "Default" : "Value"}
                         />
@@ -1761,11 +1983,16 @@ function App() {
                         <input
                           type={getInputTypeForDataType(column.dataType)}
                           inputMode={
-                            numberTypes.has(column.dataType) ? "decimal" : "text"
+                            numberTypes.has(column.dataType)
+                              ? "decimal"
+                              : "text"
                           }
                           value={value}
                           onChange={(event) =>
-                            updateCrudValue(column.columnName, event.target.value)
+                            updateCrudValue(
+                              column.columnName,
+                              event.target.value,
+                            )
                           }
                           placeholder={column.hasDefault ? "Default" : "Value"}
                         />

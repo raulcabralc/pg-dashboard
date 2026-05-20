@@ -38,6 +38,26 @@ function assertCrudAllowed(crudMetadata, action) {
   }
 }
 
+function assertEnumValues(crudMetadata, values = {}) {
+  for (const column of crudMetadata.columns) {
+    if (!column.isEnum || values[column.columnName] === undefined) {
+      continue;
+    }
+
+    const value = values[column.columnName];
+
+    if (value === null || value === "") {
+      continue;
+    }
+
+    if (!column.enumValues.includes(value)) {
+      throw new BadRequestError(
+        `${column.columnName} must be one of: ${column.enumValues.join(", ")}.`,
+      );
+    }
+  }
+}
+
 /**
  * @param {import('../index').PgDashboardConfig} config
  */
@@ -173,6 +193,7 @@ function createDashboardRouter(config = {}) {
         schemaName,
       );
       assertCrudAllowed(crudMetadata, "create");
+      assertEnumValues(crudMetadata, req.body?.values);
       const query = buildInsertQuery({
         schemaName,
         tableName: req.params.tableName,
@@ -229,6 +250,7 @@ function createDashboardRouter(config = {}) {
         schemaName,
       );
       assertCrudAllowed(crudMetadata, "update");
+      assertEnumValues(crudMetadata, req.body?.values);
       const query = buildUpdateQuery({
         schemaName,
         tableName: req.params.tableName,

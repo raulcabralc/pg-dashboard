@@ -135,6 +135,37 @@ async function getPrimaryKeyColumns(pool, tableName, schemaName = "public") {
   return result.rows.map((row) => row.columnName);
 }
 
+async function getEnumValues(pool, schemaName = "public") {
+  const result = await pool.query(
+    `
+      SELECT
+        n.nspname AS "enumSchema",
+        t.typname AS "enumName",
+        e.enumlabel AS "enumValue"
+      FROM pg_catalog.pg_type t
+      JOIN pg_catalog.pg_enum e
+        ON e.enumtypid = t.oid
+      JOIN pg_catalog.pg_namespace n
+        ON n.oid = t.typnamespace
+      WHERE n.nspname = $1
+      ORDER BY n.nspname, t.typname, e.enumsortorder
+    `,
+    [schemaName],
+  );
+
+  return result.rows.reduce((enumValuesByType, row) => {
+    const key = `${row.enumSchema}.${row.enumName}`;
+
+    if (!enumValuesByType[key]) {
+      enumValuesByType[key] = [];
+    }
+
+    enumValuesByType[key].push(row.enumValue);
+
+    return enumValuesByType;
+  }, {});
+}
+
 async function getCrudMetadata(pool, tableName, schemaName = "public") {
   const relation = await getRelation(pool, tableName, schemaName);
   const columnsResult = await pool.query(
@@ -142,6 +173,7 @@ async function getCrudMetadata(pool, tableName, schemaName = "public") {
       SELECT
         column_name AS "columnName",
         data_type AS "dataType",
+        udt_schema AS "udtSchema",
         udt_name AS "udtName",
         is_nullable AS "isNullable",
         column_default AS "columnDefault",
@@ -162,6 +194,7 @@ async function getCrudMetadata(pool, tableName, schemaName = "public") {
       ? columnsResult.rows
       : await listColumns(pool, tableName, schemaName);
   const primaryKeyColumns = await getPrimaryKeyColumns(pool, tableName, schemaName);
+  const enumValuesByType = await getEnumValues(pool, schemaName);
   const isWritableRelation = relation.relationType === "table";
   const columns = baseColumns.map((column) => {
     const isPrimaryKey = primaryKeyColumns.includes(column.columnName);
@@ -170,6 +203,9 @@ async function getCrudMetadata(pool, tableName, schemaName = "public") {
     const hasDefault = Boolean(column.columnDefault) || isIdentity;
     const isWritable =
       isWritableRelation && !isGenerated && !isIdentity && !isPrimaryKey;
+    const enumValues =
+      enumValuesByType[`${column.udtSchema || schemaName}.${column.udtName}`] ||
+      [];
 
     return {
       ...column,
@@ -179,6 +215,8 @@ async function getCrudMetadata(pool, tableName, schemaName = "public") {
       hasDefault,
       isPrimaryKey,
       isWritable,
+      isEnum: enumValues.length > 0,
+      enumValues,
     };
   });
 
