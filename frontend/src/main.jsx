@@ -10,6 +10,7 @@ import {
   FileSpreadsheet,
   FileText,
   Moon,
+  Pencil,
   Play,
   Plus,
   Rows3,
@@ -182,6 +183,29 @@ function downloadExcel(rows, fileName) {
   );
 }
 
+async function parseApiResponse(response, fallbackMessage) {
+  const responseText = await response.text();
+  let payload = {};
+
+  if (responseText) {
+    try {
+      payload = JSON.parse(responseText);
+    } catch (error) {
+      throw new Error(
+        responseText.trim().startsWith("<")
+          ? "The API returned HTML instead of JSON. Restart the server so the backend routes are up to date."
+          : "The API returned an invalid JSON response.",
+      );
+    }
+  }
+
+  if (!response.ok) {
+    throw new Error(payload.error?.message || fallbackMessage);
+  }
+
+  return payload;
+}
+
 const operatorOptions = [
   { value: "equals", label: "Equals" },
   { value: "contains", label: "Contains" },
@@ -267,6 +291,136 @@ function sanitizeFilterValue(value, dataType) {
       .replace(/[^a-z]/gi, "")
       .slice(0, 5)
       .toLowerCase();
+  }
+
+  return value;
+}
+
+function getInputTypeForDataType(dataType) {
+  const kind = getColumnKind(dataType);
+
+  if (kind === "number") {
+    return "text";
+  }
+
+  if (dataType === "date") {
+    return "date";
+  }
+
+  if (dataType?.startsWith("timestamp")) {
+    return "datetime-local";
+  }
+
+  if (dataType?.startsWith("time")) {
+    return "time";
+  }
+
+  return "text";
+}
+
+function padDatePart(value) {
+  return String(value).padStart(2, "0");
+}
+
+function formatDateInputValue(value) {
+  if (!value) {
+    return "";
+  }
+
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value)) {
+    return value.slice(0, 10);
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return [
+    date.getFullYear(),
+    padDatePart(date.getMonth() + 1),
+    padDatePart(date.getDate()),
+  ].join("-");
+}
+
+function formatTimeInputValue(value) {
+  if (!value) {
+    return "";
+  }
+
+  if (typeof value === "string" && /^\d{2}:\d{2}/.test(value)) {
+    return value.slice(0, 8);
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return [
+    padDatePart(date.getHours()),
+    padDatePart(date.getMinutes()),
+    padDatePart(date.getSeconds()),
+  ].join(":");
+}
+
+function formatDateTimeInputValue(value) {
+  if (!value) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    const normalizedValue = value.replace(" ", "T");
+    const match = normalizedValue.match(
+      /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::(\d{2}))?/,
+    );
+
+    if (match) {
+      return `${match[1]}T${match[2]}`;
+    }
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return `${formatDateInputValue(date)}T${[
+    padDatePart(date.getHours()),
+    padDatePart(date.getMinutes()),
+  ].join(":")}`;
+}
+
+function formatCrudInputValue(value, column) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (column.dataType === "date") {
+    return formatDateInputValue(value);
+  }
+
+  if (column.dataType?.startsWith("timestamp")) {
+    return formatDateTimeInputValue(value);
+  }
+
+  if (column.dataType?.startsWith("time")) {
+    return formatTimeInputValue(value);
+  }
+
+  return value;
+}
+
+function normalizeCrudValue(value, column, mode) {
+  if (value === "" && column.isNullable) {
+    return null;
+  }
+
+  if (value === "" && mode === "create" && column.hasDefault) {
+    return undefined;
   }
 
   return value;
@@ -443,9 +597,20 @@ function App() {
   const [removingFilterIds, setRemovingFilterIds] = useState([]);
   const [isQueryTransitioning, setIsQueryTransitioning] = useState(false);
   const [brandImageFailed, setBrandImageFailed] = useState(false);
+  const [crudMetadata, setCrudMetadata] = useState(null);
+  const [crudDrawer, setCrudDrawer] = useState({
+    mode: null,
+    row: null,
+    values: {},
+    primaryKey: {},
+  });
+  const [isCrudDrawerClosing, setIsCrudDrawerClosing] = useState(false);
+  const [isSavingRecord, setIsSavingRecord] = useState(false);
+  const [isLoadingRecord, setIsLoadingRecord] = useState(false);
   const copiedTimeoutRef = useRef(null);
   const hoverTimeoutRef = useRef(null);
   const queryTransitionTimeoutRef = useRef(null);
+  const crudDrawerCloseTimeoutRef = useRef(null);
 
   const selectedColumns = useMemo(
     () =>
@@ -471,6 +636,11 @@ function App() {
       })),
     [columns],
   );
+  const writableCrudColumns = useMemo(
+    () => (crudMetadata?.columns || []).filter((column) => column.isWritable),
+    [crudMetadata],
+  );
+  const isCrudDrawerOpen = Boolean(crudDrawer.mode);
 
   function getColumnValueOptionsKey(tableName, columnName) {
     return `${tableName}:${columnName}`;
@@ -483,30 +653,14 @@ function App() {
 
   useEffect(() => {
     fetch("./api/health")
-      .then(async (response) => {
-        const payload = await response.json();
-
-        if (!response.ok) {
-          throw new Error(
-            payload.error?.message || "Could not load database info.",
-          );
-        }
-
-        return payload;
-      })
+      .then((response) =>
+        parseApiResponse(response, "Could not load database info."),
+      )
       .then((payload) => setDatabaseName(payload.databaseName || ""))
       .catch(() => setDatabaseName(""));
 
     fetch("./api/tables")
-      .then(async (response) => {
-        const payload = await response.json();
-
-        if (!response.ok) {
-          throw new Error(payload.error?.message || "Could not load tables.");
-        }
-
-        return payload;
-      })
+      .then((response) => parseApiResponse(response, "Could not load tables."))
       .then((payload) => {
         const nextRelations =
           payload.relations ||
@@ -533,15 +687,7 @@ function App() {
     }
 
     fetch(`./api/tables/${encodeURIComponent(selectedTableName)}/columns`)
-      .then(async (response) => {
-        const payload = await response.json();
-
-        if (!response.ok) {
-          throw new Error(payload.error?.message || "Could not load columns.");
-        }
-
-        return payload;
-      })
+      .then((response) => parseApiResponse(response, "Could not load columns."))
       .then((payload) => {
         const nextColumns = payload.columns || [];
         const defaultColumnNames = nextColumns
@@ -564,6 +710,16 @@ function App() {
       })
       .catch((error) => {
         setIsQueryTransitioning(false);
+        toast.error(error.message);
+      });
+
+    fetch(`./api/tables/${encodeURIComponent(selectedTableName)}/crud-meta`)
+      .then((response) =>
+        parseApiResponse(response, "Could not load CRUD metadata."),
+      )
+      .then((payload) => setCrudMetadata(payload))
+      .catch((error) => {
+        setCrudMetadata(null);
         toast.error(error.message);
       });
   }, [selectedTableName]);
@@ -646,15 +802,7 @@ function App() {
     fetch(
       `./api/tables/${encodeURIComponent(selectedTableName)}/columns/${encodeURIComponent(columnName)}/values`,
     )
-      .then(async (response) => {
-        const payload = await response.json();
-
-        if (!response.ok) {
-          throw new Error(payload.error?.message || "Could not load values.");
-        }
-
-        return payload;
-      })
+      .then((response) => parseApiResponse(response, "Could not load values."))
       .then((payload) => {
         setColumnValueOptions((currentOptions) => ({
           ...currentOptions,
@@ -738,6 +886,225 @@ function App() {
     }, 180);
   }
 
+  function getPrimaryKeyFromRow(row) {
+    const primaryKeyColumns = crudMetadata?.primaryKeyColumns || [];
+
+    if (!primaryKeyColumns.length) {
+      return null;
+    }
+
+    const primaryKey = {};
+
+    for (const columnName of primaryKeyColumns) {
+      if (
+        row[columnName] === undefined ||
+        row[columnName] === null ||
+        row[columnName] === ""
+      ) {
+        return null;
+      }
+
+      primaryKey[columnName] = row[columnName];
+    }
+
+    return primaryKey;
+  }
+
+  function openCreateDrawer() {
+    const values = Object.fromEntries(
+      writableCrudColumns.map((column) => [column.columnName, ""]),
+    );
+
+    if (crudDrawerCloseTimeoutRef.current) {
+      window.clearTimeout(crudDrawerCloseTimeoutRef.current);
+    }
+
+    setIsCrudDrawerClosing(false);
+    setCrudDrawer({ mode: "create", row: null, values, primaryKey: {} });
+  }
+
+  async function loadFullRow(primaryKey) {
+    const response = await fetch(
+      `./api/tables/${encodeURIComponent(selectedTableName)}/records/find`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ primaryKey }),
+      },
+    );
+    const payload = await parseApiResponse(response, "Could not load record.");
+
+    return payload.row;
+  }
+
+  async function openEditDrawer(row) {
+    const primaryKey = getPrimaryKeyFromRow(row);
+
+    if (!primaryKey) {
+      toast.error("Select primary key columns to edit this row.");
+      return;
+    }
+
+    setIsLoadingRecord(true);
+
+    try {
+      const fullRow = await loadFullRow(primaryKey);
+      const values = Object.fromEntries(
+        writableCrudColumns.map((column) => [
+          column.columnName,
+          formatCrudInputValue(fullRow[column.columnName], column),
+        ]),
+      );
+
+      if (crudDrawerCloseTimeoutRef.current) {
+        window.clearTimeout(crudDrawerCloseTimeoutRef.current);
+      }
+
+      setIsCrudDrawerClosing(false);
+      setCrudDrawer({ mode: "edit", row: fullRow, values, primaryKey });
+    } catch (error) {
+      toast.error(error.message);
+    } finally {
+      setIsLoadingRecord(false);
+    }
+  }
+
+  function openDeleteDrawer(row) {
+    const primaryKey = getPrimaryKeyFromRow(row);
+
+    if (!primaryKey) {
+      toast.error("Select primary key columns to delete this row.");
+      return;
+    }
+
+    if (crudDrawerCloseTimeoutRef.current) {
+      window.clearTimeout(crudDrawerCloseTimeoutRef.current);
+    }
+
+    setIsCrudDrawerClosing(false);
+    setCrudDrawer({ mode: "delete", row, values: {}, primaryKey });
+  }
+
+  function closeCrudDrawer(force = false) {
+    if (!crudDrawer.mode || (!force && isSavingRecord)) {
+      return;
+    }
+
+    setIsCrudDrawerClosing(true);
+
+    if (crudDrawerCloseTimeoutRef.current) {
+      window.clearTimeout(crudDrawerCloseTimeoutRef.current);
+    }
+
+    crudDrawerCloseTimeoutRef.current = window.setTimeout(() => {
+      setCrudDrawer({ mode: null, row: null, values: {}, primaryKey: {} });
+      setIsCrudDrawerClosing(false);
+    }, 210);
+  }
+
+  function updateCrudValue(columnName, value) {
+    setCrudDrawer((currentDrawer) => ({
+      ...currentDrawer,
+      values: {
+        ...currentDrawer.values,
+        [columnName]: value,
+      },
+    }));
+  }
+
+  function buildCrudValues(mode) {
+    return Object.fromEntries(
+      writableCrudColumns
+        .map((column) => [
+          column.columnName,
+          normalizeCrudValue(crudDrawer.values[column.columnName], column, mode),
+        ])
+        .filter(([, value]) => value !== undefined),
+    );
+  }
+
+  function validateCrudValues(mode) {
+    if (mode === "delete") {
+      return true;
+    }
+
+    const missingColumn = writableCrudColumns.find((column) => {
+      const value = crudDrawer.values[column.columnName];
+
+      if (mode === "create" && column.hasDefault) {
+        return false;
+      }
+
+      return (
+        !column.isNullable &&
+        (value === undefined || value === null || value === "")
+      );
+    });
+
+    if (missingColumn) {
+      toast.error(`${missingColumn.columnName} is required.`);
+      return false;
+    }
+
+    return true;
+  }
+
+  async function refreshReportAfterCrud() {
+    if (hasRunReport) {
+      await generateReport();
+    }
+  }
+
+  async function submitCrud(event) {
+    event.preventDefault();
+
+    if (!crudDrawer.mode) {
+      return;
+    }
+
+    if (!validateCrudValues(crudDrawer.mode)) {
+      return;
+    }
+
+    setIsSavingRecord(true);
+
+    try {
+      const mode = crudDrawer.mode;
+      const isDelete = mode === "delete";
+      const response = await fetch(
+        `./api/tables/${encodeURIComponent(selectedTableName)}/records`,
+        {
+          method:
+            mode === "create" ? "POST" : mode === "edit" ? "PATCH" : "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            isDelete
+              ? { primaryKey: crudDrawer.primaryKey }
+              : {
+                  primaryKey: mode === "edit" ? crudDrawer.primaryKey : undefined,
+                  values: buildCrudValues(mode),
+                },
+          ),
+        },
+      );
+      await parseApiResponse(response, "Could not save record.");
+
+      closeCrudDrawer(true);
+      await refreshReportAfterCrud();
+      toast.success(
+        mode === "create"
+          ? "Record created"
+          : mode === "edit"
+            ? "Record updated"
+            : "Record deleted",
+      );
+    } catch (error) {
+      toast.error(error.message);
+    } finally {
+      setIsSavingRecord(false);
+    }
+  }
+
   async function copyGridValue(cellId, value) {
     const text = value === null || value === undefined ? "NULL" : String(value);
 
@@ -779,7 +1146,7 @@ function App() {
   }
 
   async function generateReport(event) {
-    event.preventDefault();
+    event?.preventDefault();
     const invalidFilter = filters.find((filter) => {
       if (filter.operator === "isNull" || filter.operator === "isNotNull") {
         return false;
@@ -806,11 +1173,10 @@ function App() {
           limit: rowLimit,
         }),
       });
-      const payload = await response.json();
-
-      if (!response.ok) {
-        throw new Error(payload.error?.message || "Could not generate report.");
-      }
+      const payload = await parseApiResponse(
+        response,
+        "Could not generate report.",
+      );
 
       const nextRows = payload.rows || [];
       setAreRowsLeaving(rows.length > 0);
@@ -927,6 +1293,20 @@ function App() {
               downloadExcel(rows, `${selectedTableName || "report"}.xls`)
             }
           />
+          <button
+            type="button"
+            className="primary buttonWithIcon"
+            onClick={openCreateDrawer}
+            disabled={!crudMetadata?.canCreate}
+            title={
+              crudMetadata?.canCreate
+                ? "Create record"
+                : "This relation is read-only"
+            }
+          >
+            <Plus size={16} />
+            New
+          </button>
         </div>
       </section>
 
@@ -1124,25 +1504,37 @@ function App() {
             ) : null}
             <div className="dataGrid" role="table">
               <div className="dataGridHeader" role="row">
+                {crudMetadata?.isWritable ? (
+                  <div
+                    className="dataGridCell dataGridHeadCell dataGridActionCell"
+                    role="columnheader"
+                  >
+                    <span className="dataGridContent">Actions</span>
+                  </div>
+                ) : null}
                 {columns.map((column) => {
                   const isSelected = selectedColumnNames.includes(
                     column.columnName,
                   );
 
                   return (
-                    <div
-                      className={
-                        isSelected
-                          ? "dataGridCell dataGridHeadCell"
-                          : "dataGridCell dataGridHeadCell dataGridCellHidden"
-                      }
-                      key={column.columnName}
-                      role="columnheader"
-                    >
-                      <span className="dataGridContent">{column.columnName}</span>
-                    </div>
+                  <div
+                    className={
+                      isSelected
+                        ? "dataGridCell dataGridHeadCell"
+                        : "dataGridCell dataGridHeadCell dataGridCellHidden"
+                    }
+                    key={column.columnName}
+                    role="columnheader"
+                  >
+                    <span className="dataGridContent">{column.columnName}</span>
+                  </div>
                   );
                 })}
+                <div
+                  className="dataGridCell dataGridHeadCell dataGridFillerCell"
+                  role="presentation"
+                />
               </div>
 
               <div className="dataGridBody" role="rowgroup">
@@ -1156,6 +1548,43 @@ function App() {
                     key={index}
                     role="row"
                   >
+                    {crudMetadata?.isWritable
+                      ? (() => {
+                          const primaryKey = getPrimaryKeyFromRow(row);
+
+                          return (
+                            <div
+                              className="dataGridCell dataGridActionCell"
+                              role="cell"
+                            >
+                              <div className="rowActions">
+                                <button
+                                  type="button"
+                                  className="iconButton"
+                                  onClick={() => openEditDrawer(row)}
+                                  disabled={
+                                    !crudMetadata?.canUpdate ||
+                                    !primaryKey ||
+                                    isLoadingRecord
+                                  }
+                                  title="Edit row"
+                                >
+                                  <Pencil size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="iconButton dangerButton"
+                                  onClick={() => openDeleteDrawer(row)}
+                                  disabled={!crudMetadata?.canDelete || !primaryKey}
+                                  title="Delete row"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })()
+                      : null}
                     {columns.map((column) => {
                       const isSelected = selectedColumnNames.includes(
                         column.columnName,
@@ -1173,13 +1602,15 @@ function App() {
                             .join(" ")}
                           key={column.columnName}
                           role="cell"
-                          onClick={
+                          onClick={() =>
                             isSelected
-                              ? () => copyGridValue(cellId, row[column.columnName])
+                              ? copyGridValue(cellId, row[column.columnName])
                               : undefined
                           }
                           onMouseEnter={
-                            isSelected && row[column.columnName] !== null && row[column.columnName] !== undefined
+                            isSelected &&
+                            row[column.columnName] !== null &&
+                            row[column.columnName] !== undefined
                               ? () =>
                                   showCellTooltipLater(
                                     cellId,
@@ -1189,7 +1620,9 @@ function App() {
                           }
                           onMouseLeave={hideCellTooltip}
                           onFocus={
-                            isSelected
+                            isSelected &&
+                            row[column.columnName] !== null &&
+                            row[column.columnName] !== undefined
                               ? () =>
                                   showCellTooltipLater(
                                     cellId,
@@ -1220,6 +1653,10 @@ function App() {
                         </div>
                       );
                     })}
+                    <div
+                      className="dataGridCell dataGridFillerCell"
+                      role="presentation"
+                    />
                   </div>
                 ))}
               </div>
@@ -1227,6 +1664,147 @@ function App() {
           </div>
         </section>
       </form>
+
+      {isCrudDrawerOpen ? (
+        <div
+          className={
+            isCrudDrawerClosing
+              ? "drawerOverlay drawerOverlayClosing"
+              : "drawerOverlay"
+          }
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closeCrudDrawer();
+            }
+          }}
+        >
+          <form
+            className={
+              isCrudDrawerClosing ? "crudDrawer crudDrawerClosing" : "crudDrawer"
+            }
+            onSubmit={submitCrud}
+          >
+            <div className="drawerHeader">
+              <div>
+                <span className="drawerEyebrow">
+                  {crudDrawer.mode === "create"
+                    ? "Create"
+                    : crudDrawer.mode === "edit"
+                      ? "Edit"
+                      : "Delete"}
+                </span>
+                <h2>{selectedTableName}</h2>
+              </div>
+              <button
+                type="button"
+                className="iconButton"
+                onClick={closeCrudDrawer}
+                title="Close"
+              >
+                <X size={17} />
+              </button>
+            </div>
+
+            {crudDrawer.mode === "delete" ? (
+              <div className="deletePanel">
+                <Trash2 size={22} />
+                <strong>Delete this record?</strong>
+                <span>
+                  This action will run a real DELETE using the primary key.
+                </span>
+                <div className="primaryKeyPreview">
+                  {Object.entries(crudDrawer.primaryKey).map(([key, value]) => (
+                    <span key={key}>
+                      {key}: <strong>{String(value)}</strong>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="crudFields">
+                {writableCrudColumns.map((column) => {
+                  const value = crudDrawer.values[column.columnName] ?? "";
+                  const isBoolean = column.dataType === "boolean";
+                  const isLongText = column.dataType === "text";
+
+                  return (
+                    <label className="crudField" key={column.columnName}>
+                      <span>
+                        {column.columnName}
+                        {!column.isNullable && !column.hasDefault ? (
+                          <strong>*</strong>
+                        ) : null}
+                      </span>
+                      {isBoolean ? (
+                        <button
+                          type="button"
+                          className={value === true || value === "true" ? "toggleButton toggleButtonOn" : "toggleButton"}
+                          onClick={() =>
+                            updateCrudValue(
+                              column.columnName,
+                              !(value === true || value === "true"),
+                            )
+                          }
+                        >
+                          {value === true || value === "true" ? "True" : "False"}
+                        </button>
+                      ) : isLongText ? (
+                        <textarea
+                          value={value}
+                          onChange={(event) =>
+                            updateCrudValue(column.columnName, event.target.value)
+                          }
+                          placeholder={column.hasDefault ? "Default" : "Value"}
+                        />
+                      ) : (
+                        <input
+                          type={getInputTypeForDataType(column.dataType)}
+                          inputMode={
+                            numberTypes.has(column.dataType) ? "decimal" : "text"
+                          }
+                          value={value}
+                          onChange={(event) =>
+                            updateCrudValue(column.columnName, event.target.value)
+                          }
+                          placeholder={column.hasDefault ? "Default" : "Value"}
+                        />
+                      )}
+                      <small>{formatDataType(column.dataType)}</small>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="drawerActions">
+              <button type="button" onClick={closeCrudDrawer}>
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className={
+                  crudDrawer.mode === "delete"
+                    ? "dangerConfirm buttonWithIcon"
+                    : "primary buttonWithIcon"
+                }
+                disabled={isSavingRecord}
+              >
+                {crudDrawer.mode === "delete" ? (
+                  <Trash2 size={16} />
+                ) : (
+                  <Check size={16} />
+                )}
+                {isSavingRecord
+                  ? "Saving..."
+                  : crudDrawer.mode === "delete"
+                    ? "Delete"
+                    : "Save"}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </main>
   );
 }

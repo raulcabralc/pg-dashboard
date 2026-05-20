@@ -32,6 +32,12 @@
   --fieldFocus: #ffffff;
   --rowHover: rgba(255, 122, 102, 0.1);
   --rowStripe: rgba(24, 24, 24, 0.025);
+  --actionCell: #ffffff;
+  --actionCellStripe: #f8f8f8;
+  --actionCellHover: #fff1ec;
+  --scrollThumb: rgba(24, 24, 24, 0.22);
+  --scrollThumbHover: rgba(228, 93, 63, 0.55);
+  --scrollTrack: rgba(24, 24, 24, 0.04);
   --selectOption: #ffffff;
   --tableFade: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.64));
   --panelFade: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.86));
@@ -72,6 +78,12 @@ html[data-theme="dark"] {
   --fieldFocus: rgba(10, 10, 10, 0.38);
   --rowHover: rgba(255, 122, 102, 0.12);
   --rowStripe: rgba(255, 255, 255, 0.035);
+  --actionCell: var(--blackLight);
+  --actionCellStripe: #2c2c2c;
+  --actionCellHover: #342722;
+  --scrollThumb: rgba(230, 230, 230, 0.24);
+  --scrollThumbHover: rgba(255, 122, 102, 0.62);
+  --scrollTrack: rgba(230, 230, 230, 0.05);
   --selectOption: var(--blackLight);
   --tableFade: linear-gradient(180deg, rgba(36, 36, 36, 0), rgba(36, 36, 36, 0.7));
   --panelFade: linear-gradient(180deg, rgba(36, 36, 36, 0), rgba(36, 36, 36, 0.86));
@@ -100,9 +112,42 @@ body {
   background: var(--appBackground);
 }
 
+* {
+  scrollbar-color: var(--scrollThumb) transparent;
+  scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background:
+    linear-gradient(var(--scrollThumb), var(--scrollThumb)) padding-box,
+    transparent border-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background:
+    linear-gradient(var(--scrollThumbHover), var(--scrollThumbHover)) padding-box,
+    transparent border-box;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -177,7 +222,8 @@ button:disabled {
 }
 
 select,
-input {
+input,
+textarea {
   width: 100%;
   min-height: 36px;
   border: 1px solid var(--lineStrong);
@@ -190,6 +236,12 @@ input {
     box-shadow 160ms ease,
     background 160ms ease;
   user-select: auto;
+}
+
+textarea {
+  min-height: 92px;
+  padding: 10px;
+  resize: vertical;
 }
 
 option {
@@ -859,10 +911,48 @@ select:focus {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  scrollbar-color: var(--scrollThumb) var(--scrollTrack);
+  scrollbar-gutter: stable both-edges;
+  scrollbar-width: auto;
   border: 1px solid var(--line);
   border-radius: 18px;
   background: var(--surface);
+  clip-path: inset(0 round 18px);
   box-shadow: var(--shadowSoft);
+}
+
+.tableWrap::-webkit-scrollbar {
+  width: 18px;
+  height: 18px;
+}
+
+.tableWrap::-webkit-scrollbar-track {
+  margin: 18px;
+  border-radius: 999px;
+  background: var(--scrollTrack);
+}
+
+.tableWrap::-webkit-scrollbar-thumb {
+  min-width: 44px;
+  min-height: 44px;
+  border: 5px solid transparent;
+  border-radius: 999px;
+  background:
+    linear-gradient(var(--scrollThumb), var(--scrollThumb)) padding-box,
+    transparent border-box;
+  background-clip: padding-box, border-box;
+}
+
+.tableWrap::-webkit-scrollbar-thumb:hover {
+  background:
+    linear-gradient(var(--scrollThumbHover), var(--scrollThumbHover)) padding-box,
+    transparent border-box;
+  background-clip: padding-box, border-box;
+}
+
+.tableWrap::-webkit-scrollbar-corner {
+  border-radius: 0 0 18px 0;
+  background: var(--scrollTrack);
 }
 
 .tableWrapTransitioning .dataGrid,
@@ -871,12 +961,14 @@ select:focus {
 }
 
 .tableWrap::after {
-  position: absolute;
+  position: sticky;
   bottom: 0;
   left: 0;
   right: 0;
   z-index: 4;
+  display: block;
   height: 46px;
+  margin-top: -46px;
   background: var(--tableFade);
   content: "";
   pointer-events: none;
@@ -884,7 +976,8 @@ select:focus {
 
 .dataGrid {
   display: flex;
-  min-width: max-content;
+  width: max-content;
+  min-width: 100%;
   flex-direction: column;
   cursor: default;
   font-family:
@@ -905,7 +998,7 @@ select:focus {
 .dataGridHeader,
 .dataGridRow {
   display: flex;
-  min-width: max-content;
+  min-width: 100%;
 }
 
 .dataGridHeader {
@@ -940,8 +1033,16 @@ select:focus {
   background: var(--rowHover);
 }
 
+.dataGridHeader .dataGridActionCell {
+  z-index: 30;
+  background: var(--surfaceSolid);
+  box-shadow: 12px 0 18px -18px rgba(0, 0, 0, 0.35);
+}
+
 .dataGridCell {
   position: relative;
+  display: flex;
+  align-items: center;
   flex: 0 0 180px;
   width: 180px;
   max-width: 180px;
@@ -962,12 +1063,65 @@ select:focus {
   white-space: nowrap;
 }
 
+.dataGridActionCell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-basis: 112px;
+  width: 112px;
+  max-width: 112px;
+  position: sticky;
+  left: 0;
+  z-index: 24;
+  background: var(--surfaceSolid);
+  box-shadow: 12px 0 18px -18px rgba(0, 0, 0, 0.35);
+}
+
+.dataGridRow .dataGridActionCell {
+  background: var(--surfaceSolid);
+}
+
+.dataGridRow:nth-child(even) .dataGridActionCell {
+  background: color-mix(in srgb, var(--surfaceSolid) 96%, var(--ink) 4%);
+}
+
+.dataGridRow:hover .dataGridActionCell {
+  background: color-mix(in srgb, var(--surfaceSolid) 90%, var(--primary) 10%);
+}
+
+.rowActions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  opacity: 0.72;
+  transition: opacity 160ms ease;
+}
+
+.dataGridRow:hover .rowActions,
+.dataGridRow:focus-within .rowActions {
+  opacity: 1;
+}
+
+.rowActions .iconButton {
+  width: 30px;
+  min-width: 30px;
+  min-height: 30px;
+}
+
 .dataGridContent {
   display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.dataGridFillerCell {
+  flex: 1 1 180px;
+  width: auto;
+  max-width: none;
+  pointer-events: none;
 }
 
 .dataGridCell {
@@ -1109,6 +1263,169 @@ select:focus {
   opacity: 0.28;
 }
 
+.drawerOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(10, 10, 10, 0.18);
+  backdrop-filter: blur(6px);
+  animation: overlayEnter 160ms ease both;
+}
+
+.drawerOverlayClosing {
+  animation: overlayLeave 210ms ease both;
+}
+
+.crudDrawer {
+  display: flex;
+  flex-direction: column;
+  width: min(440px, calc(100vw - 24px));
+  height: 100%;
+  border-left: 1px solid var(--lineStrong);
+  background: var(--surfaceSolid);
+  box-shadow: var(--shadow);
+  padding: 18px;
+  animation: drawerEnter 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.crudDrawerClosing {
+  animation: drawerLeave 210ms cubic-bezier(0.7, 0, 0.84, 0) both;
+}
+
+.drawerHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 14px;
+}
+
+.drawerHeader h2 {
+  margin: 2px 0 0;
+  color: var(--ink);
+  font-size: 20px;
+}
+
+.drawerEyebrow {
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.crudFields {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 2px;
+}
+
+.crudField {
+  display: grid;
+  gap: 7px;
+}
+
+.crudField > span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.crudField > span strong {
+  color: var(--primary);
+}
+
+.crudField small {
+  justify-self: flex-start;
+  border: 1px solid var(--typeLine);
+  border-radius: 999px;
+  background: var(--typeSoft);
+  color: var(--typeInk);
+  font-size: 10px;
+  font-weight: 800;
+  padding: 3px 7px;
+  text-transform: uppercase;
+}
+
+.toggleButton {
+  justify-content: flex-start;
+  width: 100%;
+  border-radius: 12px;
+}
+
+.toggleButtonOn {
+  border-color: rgba(76, 175, 80, 0.32);
+  background: rgba(76, 175, 80, 0.12);
+  color: var(--success);
+}
+
+.deletePanel {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.deletePanel svg {
+  color: var(--error);
+}
+
+.deletePanel strong {
+  color: var(--ink);
+}
+
+.primaryKeyPreview {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.primaryKeyPreview span {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--field);
+  padding: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawerActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex: 0 0 auto;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.dangerConfirm {
+  border-color: var(--error);
+  background: var(--error);
+  color: #ffffff;
+}
+
+.dangerConfirm:hover:not(:disabled) {
+  border-color: var(--darkRed);
+  background: var(--darkRed);
+  color: #ffffff;
+}
+
 @keyframes pageEnter {
   from {
     opacity: 0;
@@ -1218,6 +1535,50 @@ select:focus {
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes overlayEnter {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes overlayLeave {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes drawerEnter {
+  from {
+    opacity: 0;
+    transform: translateX(22px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes drawerLeave {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateX(22px);
   }
 }
 

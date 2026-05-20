@@ -2,7 +2,14 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { buildReportQuery, quoteIdentifier } = require('../backend/src/queryBuilder');
+const {
+  buildDeleteQuery,
+  buildFindRecordQuery,
+  buildInsertQuery,
+  buildReportQuery,
+  buildUpdateQuery,
+  quoteIdentifier
+} = require('../backend/src/queryBuilder');
 
 test('quoteIdentifier escapes double quotes', () => {
   assert.equal(quoteIdentifier('weird"name'), '"weird""name"');
@@ -127,5 +134,79 @@ test('buildReportQuery rejects empty and invalid typed filter values', () => {
         allowedColumnTypes: { idade: 'integer' }
       }),
     /numeric/
+  );
+});
+
+test('buildInsertQuery creates a parameterized insert with whitelisted columns', () => {
+  const query = buildInsertQuery({
+    schemaName: 'public',
+    tableName: 'pets',
+    values: { nome: 'Rex', idade: 4 },
+    writableColumnNames: ['nome', 'idade'],
+    returningColumnNames: ['id', 'nome', 'idade']
+  });
+
+  assert.equal(
+    query.text,
+    'INSERT INTO "public"."pets" ("nome", "idade") VALUES ($1, $2) RETURNING "id", "nome", "idade"'
+  );
+  assert.deepEqual(query.values, ['Rex', 4]);
+});
+
+test('buildUpdateQuery uses primary keys as parameters', () => {
+  const query = buildUpdateQuery({
+    tableName: 'pets',
+    primaryKey: { id: 7 },
+    values: { nome: 'Mia' },
+    writableColumnNames: ['nome'],
+    primaryKeyColumnNames: ['id'],
+    returningColumnNames: ['id', 'nome']
+  });
+
+  assert.equal(
+    query.text,
+    'UPDATE "pets" SET "nome" = $1 WHERE "id" = $2 RETURNING "id", "nome"'
+  );
+  assert.deepEqual(query.values, ['Mia', 7]);
+});
+
+test('buildDeleteQuery deletes only by required primary key columns', () => {
+  const query = buildDeleteQuery({
+    tableName: 'pets',
+    primaryKey: { id: 7 },
+    primaryKeyColumnNames: ['id'],
+    returningColumnNames: ['id']
+  });
+
+  assert.equal(query.text, 'DELETE FROM "pets" WHERE "id" = $1 RETURNING "id"');
+  assert.deepEqual(query.values, [7]);
+});
+
+test('buildFindRecordQuery loads a full row by primary key', () => {
+  const query = buildFindRecordQuery({
+    schemaName: 'public',
+    tableName: 'pets',
+    primaryKey: { id: 7 },
+    primaryKeyColumnNames: ['id'],
+    returningColumnNames: ['id', 'nome', 'updatedAt']
+  });
+
+  assert.equal(
+    query.text,
+    'SELECT "id", "nome", "updatedAt" FROM "public"."pets" WHERE "id" = $1 LIMIT $2'
+  );
+  assert.deepEqual(query.values, [7, 1]);
+});
+
+test('crud query builders reject non-whitelisted columns', () => {
+  assert.throws(
+    () =>
+      buildInsertQuery({
+        tableName: 'pets',
+        values: { rawSql: 'boom' },
+        writableColumnNames: ['nome'],
+        returningColumnNames: ['id']
+      }),
+    /Invalid values/
   );
 });

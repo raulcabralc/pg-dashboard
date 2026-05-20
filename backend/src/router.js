@@ -4,8 +4,15 @@ const path = require("path");
 const express = require("express");
 const { Pool } = require("pg");
 const { BadRequestError } = require("./errors");
-const { buildReportQuery } = require("./queryBuilder");
 const {
+  buildDeleteQuery,
+  buildFindRecordQuery,
+  buildInsertQuery,
+  buildReportQuery,
+  buildUpdateQuery,
+} = require("./queryBuilder");
+const {
+  getCrudMetadata,
   getDatabaseHealth,
   getTableWhitelist,
   listColumns,
@@ -21,6 +28,14 @@ function normalizeReportLimit(limit) {
   }
 
   return reportLimit;
+}
+
+function assertCrudAllowed(crudMetadata, action) {
+  const flagName = `can${action[0].toUpperCase()}${action.slice(1)}`;
+
+  if (!crudMetadata[flagName]) {
+    throw new BadRequestError(`${action} is not available for this relation.`);
+  }
 }
 
 /**
@@ -83,6 +98,19 @@ function createDashboardRouter(config = {}) {
     }
   });
 
+  router.get("/api/tables/:tableName/crud-meta", async (req, res, next) => {
+    try {
+      const crudMetadata = await getCrudMetadata(
+        pool,
+        req.params.tableName,
+        schemaName,
+      );
+      res.json(crudMetadata);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get(
     "/api/tables/:tableName/columns/:columnName/values",
     async (req, res, next) => {
@@ -135,6 +163,128 @@ function createDashboardRouter(config = {}) {
     } catch (error) {
       next(error);
     }
+  });
+
+  router.post("/api/tables/:tableName/records", async (req, res, next) => {
+    try {
+      const crudMetadata = await getCrudMetadata(
+        pool,
+        req.params.tableName,
+        schemaName,
+      );
+      assertCrudAllowed(crudMetadata, "create");
+      const query = buildInsertQuery({
+        schemaName,
+        tableName: req.params.tableName,
+        values: req.body?.values,
+        writableColumnNames: crudMetadata.columns
+          .filter((column) => column.isWritable)
+          .map((column) => column.columnName),
+        returningColumnNames: crudMetadata.columns.map((column) => column.columnName),
+      });
+      const result = await pool.query(query.text, query.values);
+
+      res.status(201).json({ row: result.rows[0] });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/api/tables/:tableName/records/find", async (req, res, next) => {
+    try {
+      const crudMetadata = await getCrudMetadata(
+        pool,
+        req.params.tableName,
+        schemaName,
+      );
+
+      if (!crudMetadata.primaryKeyColumns.length) {
+        throw new BadRequestError("Primary key is required to find a record.");
+      }
+
+      const query = buildFindRecordQuery({
+        schemaName,
+        tableName: req.params.tableName,
+        primaryKey: req.body?.primaryKey,
+        primaryKeyColumnNames: crudMetadata.primaryKeyColumns,
+        returningColumnNames: crudMetadata.columns.map((column) => column.columnName),
+      });
+      const result = await pool.query(query.text, query.values);
+
+      if (!result.rows[0]) {
+        throw new BadRequestError("Record not found.");
+      }
+
+      res.json({ row: result.rows[0] });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.patch("/api/tables/:tableName/records", async (req, res, next) => {
+    try {
+      const crudMetadata = await getCrudMetadata(
+        pool,
+        req.params.tableName,
+        schemaName,
+      );
+      assertCrudAllowed(crudMetadata, "update");
+      const query = buildUpdateQuery({
+        schemaName,
+        tableName: req.params.tableName,
+        primaryKey: req.body?.primaryKey,
+        values: req.body?.values,
+        writableColumnNames: crudMetadata.columns
+          .filter((column) => column.isWritable)
+          .map((column) => column.columnName),
+        primaryKeyColumnNames: crudMetadata.primaryKeyColumns,
+        returningColumnNames: crudMetadata.columns.map((column) => column.columnName),
+      });
+      const result = await pool.query(query.text, query.values);
+
+      if (!result.rows[0]) {
+        throw new BadRequestError("Record not found.");
+      }
+
+      res.json({ row: result.rows[0] });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.delete("/api/tables/:tableName/records", async (req, res, next) => {
+    try {
+      const crudMetadata = await getCrudMetadata(
+        pool,
+        req.params.tableName,
+        schemaName,
+      );
+      assertCrudAllowed(crudMetadata, "delete");
+      const query = buildDeleteQuery({
+        schemaName,
+        tableName: req.params.tableName,
+        primaryKey: req.body?.primaryKey,
+        primaryKeyColumnNames: crudMetadata.primaryKeyColumns,
+        returningColumnNames: crudMetadata.columns.map((column) => column.columnName),
+      });
+      const result = await pool.query(query.text, query.values);
+
+      if (!result.rows[0]) {
+        throw new BadRequestError("Record not found.");
+      }
+
+      res.json({ row: result.rows[0] });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.use("/api", (req, res) => {
+    res.status(404).json({
+      error: {
+        message: "API route not found.",
+      },
+    });
   });
 
   router.use(express.static(frontendDistPath));

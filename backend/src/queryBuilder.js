@@ -277,9 +277,160 @@ function buildReportQuery({
   };
 }
 
+function normalizeObjectPayload(payload, fieldName) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new BadRequestError(`${fieldName} must be an object.`);
+  }
+
+  return payload;
+}
+
+function normalizeWritableValues(values, writableColumnNames) {
+  const normalizedValues = normalizeObjectPayload(values, "values");
+  const entries = Object.entries(normalizedValues).filter(
+    ([, value]) => value !== undefined,
+  );
+
+  if (entries.length === 0) {
+    throw new BadRequestError("values must contain at least one column.");
+  }
+
+  assertColumnsExist(
+    entries.map(([columnName]) => columnName),
+    writableColumnNames,
+    "values",
+  );
+
+  return entries;
+}
+
+function normalizePrimaryKey(primaryKey, primaryKeyColumnNames) {
+  const normalizedPrimaryKey = normalizeObjectPayload(primaryKey, "primaryKey");
+  const primaryKeyEntries = primaryKeyColumnNames.map((columnName) => {
+    if (
+      normalizedPrimaryKey[columnName] === undefined ||
+      normalizedPrimaryKey[columnName] === null ||
+      normalizedPrimaryKey[columnName] === ""
+    ) {
+      throw new BadRequestError(`primaryKey.${columnName} is required.`);
+    }
+
+    return [columnName, normalizedPrimaryKey[columnName]];
+  });
+
+  assertColumnsExist(
+    Object.keys(normalizedPrimaryKey),
+    primaryKeyColumnNames,
+    "primaryKey",
+  );
+
+  return primaryKeyEntries;
+}
+
+function buildInsertQuery({
+  schemaName,
+  tableName,
+  values,
+  writableColumnNames,
+  returningColumnNames,
+}) {
+  const entries = normalizeWritableValues(values, writableColumnNames);
+  const columnClause = entries.map(([columnName]) => quoteIdentifier(columnName)).join(", ");
+  const placeholders = entries.map(([, value], index) => `$${index + 1}`);
+  const queryValues = entries.map(([, value]) => value);
+  const returningClause = returningColumnNames.map(quoteIdentifier).join(", ");
+
+  return {
+    text: `INSERT INTO ${quoteQualifiedTableName(tableName, schemaName)} (${columnClause}) VALUES (${placeholders.join(", ")}) RETURNING ${returningClause}`,
+    values: queryValues,
+  };
+}
+
+function buildUpdateQuery({
+  schemaName,
+  tableName,
+  primaryKey,
+  values,
+  writableColumnNames,
+  primaryKeyColumnNames,
+  returningColumnNames,
+}) {
+  const valueEntries = normalizeWritableValues(values, writableColumnNames);
+  const primaryKeyEntries = normalizePrimaryKey(primaryKey, primaryKeyColumnNames);
+  const queryValues = [];
+  const setClause = valueEntries
+    .map(([columnName, value]) => {
+      queryValues.push(value);
+      return `${quoteIdentifier(columnName)} = $${queryValues.length}`;
+    })
+    .join(", ");
+  const whereClause = primaryKeyEntries
+    .map(([columnName, value]) => {
+      queryValues.push(value);
+      return `${quoteIdentifier(columnName)} = $${queryValues.length}`;
+    })
+    .join(" AND ");
+  const returningClause = returningColumnNames.map(quoteIdentifier).join(", ");
+
+  return {
+    text: `UPDATE ${quoteQualifiedTableName(tableName, schemaName)} SET ${setClause} WHERE ${whereClause} RETURNING ${returningClause}`,
+    values: queryValues,
+  };
+}
+
+function buildDeleteQuery({
+  schemaName,
+  tableName,
+  primaryKey,
+  primaryKeyColumnNames,
+  returningColumnNames,
+}) {
+  const primaryKeyEntries = normalizePrimaryKey(primaryKey, primaryKeyColumnNames);
+  const queryValues = [];
+  const whereClause = primaryKeyEntries
+    .map(([columnName, value]) => {
+      queryValues.push(value);
+      return `${quoteIdentifier(columnName)} = $${queryValues.length}`;
+    })
+    .join(" AND ");
+  const returningClause = returningColumnNames.map(quoteIdentifier).join(", ");
+
+  return {
+    text: `DELETE FROM ${quoteQualifiedTableName(tableName, schemaName)} WHERE ${whereClause} RETURNING ${returningClause}`,
+    values: queryValues,
+  };
+}
+
+function buildFindRecordQuery({
+  schemaName,
+  tableName,
+  primaryKey,
+  primaryKeyColumnNames,
+  returningColumnNames,
+}) {
+  const primaryKeyEntries = normalizePrimaryKey(primaryKey, primaryKeyColumnNames);
+  const queryValues = [];
+  const whereClause = primaryKeyEntries
+    .map(([columnName, value]) => {
+      queryValues.push(value);
+      return `${quoteIdentifier(columnName)} = $${queryValues.length}`;
+    })
+    .join(" AND ");
+  const selectClause = returningColumnNames.map(quoteIdentifier).join(", ");
+
+  return {
+    text: `SELECT ${selectClause} FROM ${quoteQualifiedTableName(tableName, schemaName)} WHERE ${whereClause} LIMIT $${queryValues.length + 1}`,
+    values: [...queryValues, 1],
+  };
+}
+
 module.exports = {
   allowedOperators,
   buildFilterColumnExpression,
+  buildDeleteQuery,
+  buildFindRecordQuery,
+  buildInsertQuery,
+  buildUpdateQuery,
   getAllowedOperatorsForKind,
   getFilterKind,
   quoteIdentifier,

@@ -1,3 +1,4 @@
 .prettier*
 node_modules
 .env
+frontend/dist

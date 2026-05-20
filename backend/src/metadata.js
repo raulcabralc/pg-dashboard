@@ -38,6 +38,17 @@ async function listRelations(pool, schemaName = "public") {
   }));
 }
 
+async function getRelation(pool, tableName, schemaName = "public") {
+  const relations = await listRelations(pool, schemaName);
+  const relation = relations.find((candidate) => candidate.tableName === tableName);
+
+  if (!relation) {
+    throw new BadRequestError("Invalid tableName.");
+  }
+
+  return relation;
+}
+
 async function listColumns(pool, tableName, schemaName = "public") {
   const result = await pool.query(
     `
@@ -101,6 +112,91 @@ async function listColumns(pool, tableName, schemaName = "public") {
   );
 
   return fallbackResult.rows;
+}
+
+async function getPrimaryKeyColumns(pool, tableName, schemaName = "public") {
+  const result = await pool.query(
+    `
+      SELECT kcu.column_name AS "columnName"
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.key_column_usage kcu
+        ON kcu.constraint_name = tc.constraint_name
+       AND kcu.constraint_schema = tc.constraint_schema
+       AND kcu.table_schema = tc.table_schema
+       AND kcu.table_name = tc.table_name
+      WHERE tc.constraint_type = 'PRIMARY KEY'
+        AND tc.table_schema = $1
+        AND tc.table_name = $2
+      ORDER BY kcu.ordinal_position
+    `,
+    [schemaName, tableName],
+  );
+
+  return result.rows.map((row) => row.columnName);
+}
+
+async function getCrudMetadata(pool, tableName, schemaName = "public") {
+  const relation = await getRelation(pool, tableName, schemaName);
+  const columnsResult = await pool.query(
+    `
+      SELECT
+        column_name AS "columnName",
+        data_type AS "dataType",
+        udt_name AS "udtName",
+        is_nullable AS "isNullable",
+        column_default AS "columnDefault",
+        is_identity AS "isIdentity",
+        is_generated AS "isGenerated",
+        character_maximum_length AS "characterMaximumLength",
+        numeric_precision AS "numericPrecision",
+        numeric_scale AS "numericScale"
+      FROM information_schema.columns
+      WHERE table_schema = $1
+        AND table_name = $2
+      ORDER BY ordinal_position
+    `,
+    [schemaName, tableName],
+  );
+  const baseColumns =
+    columnsResult.rows.length > 0
+      ? columnsResult.rows
+      : await listColumns(pool, tableName, schemaName);
+  const primaryKeyColumns = await getPrimaryKeyColumns(pool, tableName, schemaName);
+  const isWritableRelation = relation.relationType === "table";
+  const columns = baseColumns.map((column) => {
+    const isPrimaryKey = primaryKeyColumns.includes(column.columnName);
+    const isGenerated = column.isGenerated === "ALWAYS";
+    const isIdentity = column.isIdentity === "YES";
+    const hasDefault = Boolean(column.columnDefault) || isIdentity;
+    const isWritable =
+      isWritableRelation && !isGenerated && !isIdentity && !isPrimaryKey;
+
+    return {
+      ...column,
+      isNullable: column.isNullable === "YES",
+      isIdentity,
+      isGenerated,
+      hasDefault,
+      isPrimaryKey,
+      isWritable,
+    };
+  });
+
+  return {
+    schemaName,
+    tableName,
+    relationType: relation.relationType,
+    isView: relation.isView,
+    isWritable: isWritableRelation,
+    canCreate: isWritableRelation && columns.some((column) => column.isWritable),
+    canUpdate:
+      isWritableRelation &&
+      primaryKeyColumns.length > 0 &&
+      columns.some((column) => column.isWritable),
+    canDelete: isWritableRelation && primaryKeyColumns.length > 0,
+    primaryKeyColumns,
+    columns,
+  };
 }
 
 async function getTableWhitelist(pool, tableName, schemaName = "public") {
@@ -186,6 +282,7 @@ module.exports = {
   listRelations,
   listColumns,
   listColumnValues,
+  getCrudMetadata,
   getTableWhitelist,
   getDatabaseHealth,
 };
