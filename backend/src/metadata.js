@@ -1,26 +1,50 @@
 "use strict";
 
 const { BadRequestError } = require("./errors");
+const { quoteIdentifier, quoteQualifiedTableName } = require("./queryBuilder");
 
 async function listTables(pool, schemaName = "public") {
+  const relations = await listRelations(pool, schemaName);
+
+  return relations.map((relation) => relation.tableName);
+}
+
+async function listRelations(pool, schemaName = "public") {
   const result = await pool.query(
     `
-    SELECT table_name AS "tableName"
-    FROM information_schema.tables
-    WHERE table_schema = $1
-      AND table_type = 'BASE TABLE'
-    ORDER BY table_name
+    SELECT
+      c.relname AS "tableName",
+      CASE c.relkind
+        WHEN 'v' THEN 'view'
+        WHEN 'm' THEN 'materializedView'
+        ELSE 'table'
+      END AS "relationType"
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n
+      ON n.oid = c.relnamespace
+    WHERE n.nspname = $1
+      AND c.relkind IN ('r', 'p', 'v', 'm')
+    ORDER BY c.relname
   `,
     [schemaName],
   );
 
-  return result.rows.map((row) => row.tableName);
+  return result.rows.map((row) => ({
+    tableName: row.tableName,
+    relationType: row.relationType,
+    isView:
+      row.relationType === "view" ||
+      row.relationType === "materializedView",
+  }));
 }
 
 async function listColumns(pool, tableName, schemaName = "public") {
   const result = await pool.query(
     `
-      SELECT column_name AS "columnName", data_type AS "dataType"
+      SELECT
+        column_name AS "columnName",
+        data_type AS "dataType",
+        udt_name AS "udtName"
       FROM information_schema.columns
       WHERE table_schema = $1
         AND table_name = $2
@@ -29,7 +53,54 @@ async function listColumns(pool, tableName, schemaName = "public") {
     [schemaName, tableName],
   );
 
-  return result.rows;
+  if (result.rows.length) {
+    return result.rows;
+  }
+
+  const fallbackResult = await pool.query(
+    `
+      SELECT
+        a.attname AS "columnName",
+        CASE t.typname
+          WHEN 'bool' THEN 'boolean'
+          WHEN 'bpchar' THEN 'character'
+          WHEN 'date' THEN 'date'
+          WHEN 'float4' THEN 'real'
+          WHEN 'float8' THEN 'double precision'
+          WHEN 'int2' THEN 'smallint'
+          WHEN 'int4' THEN 'integer'
+          WHEN 'int8' THEN 'bigint'
+          WHEN 'json' THEN 'json'
+          WHEN 'jsonb' THEN 'jsonb'
+          WHEN 'numeric' THEN 'numeric'
+          WHEN 'text' THEN 'text'
+          WHEN 'time' THEN 'time without time zone'
+          WHEN 'timestamp' THEN 'timestamp without time zone'
+          WHEN 'timestamptz' THEN 'timestamp with time zone'
+          WHEN 'timetz' THEN 'time with time zone'
+          WHEN 'uuid' THEN 'uuid'
+          WHEN 'varchar' THEN 'character varying'
+          ELSE pg_catalog.format_type(a.atttypid, a.atttypmod)
+        END AS "dataType",
+        t.typname AS "udtName"
+      FROM pg_catalog.pg_attribute a
+      JOIN pg_catalog.pg_class c
+        ON c.oid = a.attrelid
+      JOIN pg_catalog.pg_namespace n
+        ON n.oid = c.relnamespace
+      JOIN pg_catalog.pg_type t
+        ON t.oid = a.atttypid
+      WHERE n.nspname = $1
+        AND c.relname = $2
+        AND c.relkind IN ('r', 'p', 'v', 'm')
+        AND a.attnum > 0
+        AND NOT a.attisdropped
+      ORDER BY a.attnum
+    `,
+    [schemaName, tableName],
+  );
+
+  return fallbackResult.rows;
 }
 
 async function getTableWhitelist(pool, tableName, schemaName = "public") {
@@ -73,9 +144,48 @@ async function getDatabaseHealth(pool, schemaName = "public") {
   };
 }
 
+async function listColumnValues(
+  pool,
+  tableName,
+  columnName,
+  schemaName = "public",
+  limit = 50,
+) {
+  const whitelist = await getTableWhitelist(pool, tableName, schemaName);
+
+  if (!whitelist.columnNames.includes(columnName)) {
+    throw new BadRequestError("Invalid columnName.");
+  }
+
+  const safeLimit = Number.parseInt(limit, 10);
+
+  if (!Number.isInteger(safeLimit) || safeLimit < 1 || safeLimit > 100) {
+    throw new BadRequestError("limit must be an integer between 1 and 100.");
+  }
+
+  const result = await pool.query(
+    `
+      SELECT DISTINCT ${quoteIdentifier(columnName)}::text AS value
+      FROM ${quoteQualifiedTableName(tableName, schemaName)}
+      WHERE ${quoteIdentifier(columnName)} IS NOT NULL
+      ORDER BY value
+      LIMIT $1
+    `,
+    [safeLimit + 1],
+  );
+  const values = result.rows.map((row) => row.value);
+
+  return {
+    values: values.slice(0, safeLimit),
+    hasMore: values.length > safeLimit,
+  };
+}
+
 module.exports = {
   listTables,
+  listRelations,
   listColumns,
+  listColumnValues,
   getTableWhitelist,
   getDatabaseHealth,
 };

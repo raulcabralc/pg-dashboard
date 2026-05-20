@@ -1,5 +1,5 @@
 {
-  "name": "pg-interactive-dashboard",
+  "name": "pg-dashboard",
   "version": "0.1.0",
   "description": "Plug-and-play PostgreSQL dashboard middleware for Express.",
   "main": "backend/index.js",
@@ -12,6 +12,7 @@
   "scripts": {
     "test": "node --test",
     "build": "npm --prefix frontend run build",
+    "prepublishOnly": "npm test && npm run build",
     "example": "node examples/basic-server.js"
   },
   "keywords": [

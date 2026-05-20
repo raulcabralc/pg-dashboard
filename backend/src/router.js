@@ -9,7 +9,8 @@ const {
   getDatabaseHealth,
   getTableWhitelist,
   listColumns,
-  listTables,
+  listColumnValues,
+  listRelations,
 } = require("./metadata");
 
 function normalizeReportLimit(limit) {
@@ -64,8 +65,9 @@ function createDashboardRouter(config = {}) {
 
   router.get("/api/tables", async (req, res, next) => {
     try {
-      const tables = await listTables(pool, schemaName);
-      res.json({ schemaName, tables });
+      const relations = await listRelations(pool, schemaName);
+      const tables = relations.map((relation) => relation.tableName);
+      res.json({ schemaName, tables, relations });
     } catch (error) {
       next(error);
     }
@@ -80,6 +82,30 @@ function createDashboardRouter(config = {}) {
       next(error);
     }
   });
+
+  router.get(
+    "/api/tables/:tableName/columns/:columnName/values",
+    async (req, res, next) => {
+      try {
+        const result = await listColumnValues(
+          pool,
+          req.params.tableName,
+          req.params.columnName,
+          schemaName,
+          50,
+        );
+        res.json({
+          tableName: req.params.tableName,
+          columnName: req.params.columnName,
+          values: result.values,
+          hasMore: result.hasMore,
+          useDropdown: !result.hasMore,
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
 
   router.post("/api/reports/generate", async (req, res, next) => {
     try {

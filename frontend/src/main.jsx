@@ -6,6 +6,7 @@ import {
   Copy,
   Database,
   Download,
+  Eye,
   Moon,
   Play,
   Plus,
@@ -15,8 +16,10 @@ import {
   Sparkles,
   Sun,
   Trash2,
+  X,
 } from "lucide-react";
 import toast, { Toaster } from "react-hot-toast";
+import brandIconUrl from "./pg-dashboard-icon.png";
 import "./styles.css";
 
 const numberTypes = new Set([
@@ -59,6 +62,20 @@ const compactDataTypes = new Map([
 
 function formatDataType(dataType) {
   return compactDataTypes.get(dataType) || dataType.split(" ")[0] || dataType;
+}
+
+function shouldSelectColumnByDefault(columnName) {
+  const normalizedColumnName = columnName.toLowerCase().replace(/[_\s-]/g, "");
+  const hiddenColumnNames = new Set([
+    "atualizado",
+    "created",
+    "createdat",
+    "criado",
+    "updated",
+    "updatedat",
+  ]);
+
+  return !hiddenColumnNames.has(normalizedColumnName);
 }
 
 function toCsv(rows) {
@@ -159,18 +176,26 @@ function getOperatorOptionsForDataType(dataType) {
   const kind = getColumnKind(dataType);
   const allowedOperators = allowedOperatorsByKind[kind];
 
-  return operatorOptions.filter((option) => allowedOperators.includes(option.value));
+  return operatorOptions.filter((option) =>
+    allowedOperators.includes(option.value),
+  );
 }
 
 function sanitizeFilterValue(value, dataType) {
   const kind = getColumnKind(dataType);
 
   if (kind === "number") {
-    return value.replace(/[^\d.-]/g, "").replace(/(?!^)-/g, "").replace(/(\..*)\./g, "$1");
+    return value
+      .replace(/[^\d.-]/g, "")
+      .replace(/(?!^)-/g, "")
+      .replace(/(\..*)\./g, "$1");
   }
 
   if (kind === "boolean") {
-    return value.replace(/[^a-z]/gi, "").slice(0, 5).toLowerCase();
+    return value
+      .replace(/[^a-z]/gi, "")
+      .slice(0, 5)
+      .toLowerCase();
   }
 
   return value;
@@ -204,7 +229,15 @@ function CustomDropdown({ ariaLabel, value, options, onChange, placeholder }) {
         aria-expanded={isOpen}
         onClick={() => setIsOpen((currentIsOpen) => !currentIsOpen)}
       >
-        <span>{selectedOption?.label || placeholder}</span>
+        <span className="customSelectLabel">
+          <span>{selectedOption?.label || placeholder}</span>
+          {selectedOption?.isView ? (
+            <span className="viewBadge">
+              <Eye size={12} />
+              VIEW
+            </span>
+          ) : null}
+        </span>
         <ChevronDown className={isOpen ? "chevronOpen" : ""} size={16} />
       </button>
 
@@ -220,7 +253,15 @@ function CustomDropdown({ ariaLabel, value, options, onChange, placeholder }) {
                 setIsOpen(false);
               }}
             >
-              <span>{option.label}</span>
+              <span className="customSelectLabel">
+                <span>{option.label}</span>
+                {option.isView ? (
+                  <span className="viewBadge">
+                    <Eye size={12} />
+                    VIEW
+                  </span>
+                ) : null}
+              </span>
               {option.value === value ? <Check size={15} /> : null}
             </button>
           ))}
@@ -252,20 +293,26 @@ function App() {
     return localStorage.getItem("pgDashboardTheme") || "light";
   });
   const [databaseName, setDatabaseName] = useState("");
-  const [tables, setTables] = useState([]);
+  const [relations, setRelations] = useState([]);
   const [selectedTableName, setSelectedTableName] = useState("");
   const [columns, setColumns] = useState([]);
   const [selectedColumnNames, setSelectedColumnNames] = useState([]);
   const [filters, setFilters] = useState([]);
+  const [columnValueOptions, setColumnValueOptions] = useState({});
   const [rows, setRows] = useState([]);
   const [rowLimit, setRowLimit] = useState("100");
   const [hasMoreRows, setHasMoreRows] = useState(false);
   const [hasRunReport, setHasRunReport] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [areRowsLeaving, setAreRowsLeaving] = useState(false);
   const [copiedCellId, setCopiedCellId] = useState("");
+  const [hoveredCell, setHoveredCell] = useState(null);
   const [removingFilterIds, setRemovingFilterIds] = useState([]);
+  const [isQueryTransitioning, setIsQueryTransitioning] = useState(false);
   const [brandImageFailed, setBrandImageFailed] = useState(false);
   const copiedTimeoutRef = useRef(null);
+  const hoverTimeoutRef = useRef(null);
+  const queryTransitionTimeoutRef = useRef(null);
 
   const selectedColumns = useMemo(
     () =>
@@ -275,8 +322,13 @@ function App() {
     [columns, selectedColumnNames],
   );
   const tableOptions = useMemo(
-    () => tables.map((tableName) => ({ value: tableName, label: tableName })),
-    [tables],
+    () =>
+      relations.map((relation) => ({
+        value: relation.tableName,
+        label: relation.tableName,
+        isView: relation.isView,
+      })),
+    [relations],
   );
   const columnOptions = useMemo(
     () =>
@@ -286,6 +338,10 @@ function App() {
       })),
     [columns],
   );
+
+  function getColumnValueOptionsKey(tableName, columnName) {
+    return `${tableName}:${columnName}`;
+  }
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeName;
@@ -298,7 +354,9 @@ function App() {
         const payload = await response.json();
 
         if (!response.ok) {
-          throw new Error(payload.error?.message || "Could not load database info.");
+          throw new Error(
+            payload.error?.message || "Could not load database info.",
+          );
         }
 
         return payload;
@@ -317,8 +375,15 @@ function App() {
         return payload;
       })
       .then((payload) => {
-        setTables(payload.tables || []);
-        setSelectedTableName(payload.tables?.[0] || "");
+        const nextRelations =
+          payload.relations ||
+          (payload.tables || []).map((tableName) => ({
+            tableName,
+            isView: false,
+            relationType: "table",
+          }));
+        setRelations(nextRelations);
+        setSelectedTableName(nextRelations[0]?.tableName || "");
       })
       .catch((error) => toast.error(error.message));
   }, []);
@@ -326,6 +391,12 @@ function App() {
   useEffect(() => {
     if (!selectedTableName) {
       return;
+    }
+
+    setIsQueryTransitioning(true);
+
+    if (queryTransitionTimeoutRef.current) {
+      window.clearTimeout(queryTransitionTimeoutRef.current);
     }
 
     fetch(`./api/tables/${encodeURIComponent(selectedTableName)}/columns`)
@@ -340,16 +411,28 @@ function App() {
       })
       .then((payload) => {
         const nextColumns = payload.columns || [];
+        const defaultColumnNames = nextColumns
+          .filter((column) => shouldSelectColumnByDefault(column.columnName))
+          .map((column) => column.columnName);
         setColumns(nextColumns);
         setSelectedColumnNames(
-          nextColumns.slice(0, 6).map((column) => column.columnName),
+          defaultColumnNames.length
+            ? defaultColumnNames
+            : nextColumns.map((column) => column.columnName),
         );
         setFilters([]);
+        setColumnValueOptions({});
         setRows([]);
         setHasMoreRows(false);
         setHasRunReport(false);
+        queryTransitionTimeoutRef.current = window.setTimeout(() => {
+          setIsQueryTransitioning(false);
+        }, 180);
       })
-      .catch((error) => toast.error(error.message));
+      .catch((error) => {
+        setIsQueryTransitioning(false);
+        toast.error(error.message);
+      });
   }, [selectedTableName]);
 
   function toggleColumn(columnName) {
@@ -389,7 +472,9 @@ function App() {
   }
 
   function updateFilterColumn(index, columnName) {
-    const column = columns.find((candidate) => candidate.columnName === columnName);
+    const column = columns.find(
+      (candidate) => candidate.columnName === columnName,
+    );
     const nextOperatorOptions = getOperatorOptionsForDataType(column?.dataType);
 
     setFilters((currentFilters) =>
@@ -405,12 +490,66 @@ function App() {
         return {
           ...filter,
           columnName,
-          operator: hasValidOperator ? filter.operator : nextOperatorOptions[0].value,
+          operator: hasValidOperator
+            ? filter.operator
+            : nextOperatorOptions[0].value,
           value: sanitizeFilterValue(filter.value, column?.dataType),
         };
       }),
     );
   }
+
+  function loadColumnValueOptions(columnName) {
+    if (!selectedTableName || !columnName) {
+      return;
+    }
+
+    const optionsKey = getColumnValueOptionsKey(selectedTableName, columnName);
+
+    if (columnValueOptions[optionsKey]) {
+      return;
+    }
+
+    fetch(
+      `./api/tables/${encodeURIComponent(selectedTableName)}/columns/${encodeURIComponent(columnName)}/values`,
+    )
+      .then(async (response) => {
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error?.message || "Could not load values.");
+        }
+
+        return payload;
+      })
+      .then((payload) => {
+        setColumnValueOptions((currentOptions) => ({
+          ...currentOptions,
+          [optionsKey]: payload.useDropdown
+            ? payload.values.map((value) => ({ value, label: value }))
+            : [],
+        }));
+      })
+      .catch(() => {
+        setColumnValueOptions((currentOptions) => ({
+          ...currentOptions,
+          [optionsKey]: [],
+        }));
+      });
+  }
+
+  useEffect(() => {
+    filters.forEach((filter) => {
+      const column = columns.find(
+        (candidate) => candidate.columnName === filter.columnName,
+      );
+      const kind = getColumnKind(column?.dataType);
+
+      if (kind === "text" || kind === "boolean" || kind === "basic") {
+        loadColumnValueOptions(filter.columnName);
+      }
+    });
+  }, [filters, columns, selectedTableName]);
 
   function updateFilterValue(index, value) {
     setFilters((currentFilters) =>
@@ -419,7 +558,9 @@ function App() {
           return filter;
         }
 
-        const column = columns.find((candidate) => candidate.columnName === filter.columnName);
+        const column = columns.find(
+          (candidate) => candidate.columnName === filter.columnName,
+        );
 
         return {
           ...filter,
@@ -439,10 +580,27 @@ function App() {
     setRemovingFilterIds((currentIds) => [...currentIds, filter.id]);
     window.setTimeout(() => {
       setFilters((currentFilters) =>
-        currentFilters.filter((currentFilter) => currentFilter.id !== filter.id),
+        currentFilters.filter(
+          (currentFilter) => currentFilter.id !== filter.id,
+        ),
       );
       setRemovingFilterIds((currentIds) =>
         currentIds.filter((filterId) => filterId !== filter.id),
+      );
+    }, 180);
+  }
+
+  function clearFilters() {
+    if (!filters.length) {
+      return;
+    }
+
+    const filterIds = filters.map((filter) => filter.id);
+    setRemovingFilterIds((currentIds) => [...currentIds, ...filterIds]);
+    window.setTimeout(() => {
+      setFilters([]);
+      setRemovingFilterIds((currentIds) =>
+        currentIds.filter((filterId) => !filterIds.includes(filterId)),
       );
     }, 180);
   }
@@ -464,6 +622,27 @@ function App() {
     } catch (error) {
       toast.error("Could not copy value.");
     }
+  }
+
+  function showCellTooltipLater(cellId, value) {
+    if (hoverTimeoutRef.current) {
+      window.clearTimeout(hoverTimeoutRef.current);
+    }
+
+    hoverTimeoutRef.current = window.setTimeout(() => {
+      setHoveredCell({
+        id: cellId,
+        text: value === null || value === undefined ? "NULL" : String(value),
+      });
+    }, 700);
+  }
+
+  function hideCellTooltip() {
+    if (hoverTimeoutRef.current) {
+      window.clearTimeout(hoverTimeoutRef.current);
+    }
+
+    setHoveredCell(null);
   }
 
   async function generateReport(event) {
@@ -500,7 +679,15 @@ function App() {
         throw new Error(payload.error?.message || "Could not generate report.");
       }
 
-      setRows(payload.rows || []);
+      const nextRows = payload.rows || [];
+      setAreRowsLeaving(rows.length > 0);
+      window.setTimeout(
+        () => {
+          setRows(nextRows);
+          setAreRowsLeaving(false);
+        },
+        rows.length > 0 ? 180 : 0,
+      );
       setHasMoreRows(Boolean(payload.hasMore));
       setHasRunReport(true);
       toast.success(`${payload.rowCount || 0} rows loaded`);
@@ -538,7 +725,7 @@ function App() {
             {!brandImageFailed ? (
               <img
                 alt=""
-                src="./pg-dashboard-icon.png"
+                src={brandIconUrl}
                 onError={() => setBrandImageFailed(true)}
               />
             ) : (
@@ -556,7 +743,9 @@ function App() {
         <div className="toolbarActions">
           <div className="resultMeta">
             <Rows3 size={15} />
-            <span>{rows.length ? `${rows.length} rows loaded` : "Ready to run"}</span>
+            <span>
+              {rows.length ? `${rows.length} rows loaded` : "Ready to run"}
+            </span>
             {hasMoreRows ? (
               <span className="moreRowsBadge">
                 <Sparkles size={12} />
@@ -575,7 +764,9 @@ function App() {
               aria-label="Row limit"
               inputMode="numeric"
               value={rowLimit}
-              onChange={(event) => setRowLimit(event.target.value.replace(/\D/g, "").slice(0, 3))}
+              onChange={(event) =>
+                setRowLimit(event.target.value.replace(/\D/g, "").slice(0, 3))
+              }
             />
           </label>
           <button
@@ -586,7 +777,11 @@ function App() {
                 currentThemeName === "dark" ? "light" : "dark",
               )
             }
-            title={themeName === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+            title={
+              themeName === "dark"
+                ? "Switch to light theme"
+                : "Switch to dark theme"
+            }
           >
             {themeName === "dark" ? <Sun size={17} /> : <Moon size={17} />}
           </button>
@@ -643,14 +838,25 @@ function App() {
                 <div className="groupTitle">Filters</div>
                 <p className="sectionHint">Refine rows before running.</p>
               </div>
-              <button
-                type="button"
-                className="iconButton addFilterButton"
-                onClick={addFilter}
-                title="Add filter"
-              >
-                <Plus size={18} />
-              </button>
+              <div className="filtersActions">
+                <button
+                  type="button"
+                  className="iconButton clearFiltersButton"
+                  onClick={clearFilters}
+                  disabled={!filters.length}
+                  title="Clear filters"
+                >
+                  <X size={17} />
+                </button>
+                <button
+                  type="button"
+                  className="iconButton addFilterButton"
+                  onClick={addFilter}
+                  title="Add filter"
+                >
+                  <Plus size={18} />
+                </button>
+              </div>
             </div>
 
             <div className="filterList">
@@ -666,6 +872,17 @@ function App() {
                   (candidate) => candidate.columnName === filter.columnName,
                 );
                 const isNumericValue = numberTypes.has(column?.dataType);
+                const valueOptions =
+                  columnValueOptions[
+                    getColumnValueOptionsKey(
+                      selectedTableName,
+                      filter.columnName,
+                    )
+                  ] || [];
+                const shouldUseValueDropdown =
+                  valueOptions.length > 0 &&
+                  filter.operator !== "isNull" &&
+                  filter.operator !== "isNotNull";
 
                 return (
                   <div
@@ -684,7 +901,9 @@ function App() {
                       ariaLabel="Filter column"
                       value={filter.columnName}
                       options={columnOptions}
-                      onChange={(columnName) => updateFilterColumn(index, columnName)}
+                      onChange={(columnName) =>
+                        updateFilterColumn(index, columnName)
+                      }
                       placeholder="Column"
                     />
                     <CustomDropdown
@@ -695,19 +914,29 @@ function App() {
                       placeholder="Operator"
                     />
                     <div className="filterValueRow">
-                      <input
-                        aria-label="Filter value"
-                        inputMode={isNumericValue ? "numeric" : "text"}
-                        value={filter.value}
-                        placeholder="Value"
-                        onChange={(event) =>
-                          updateFilterValue(index, event.target.value)
-                        }
-                        disabled={
-                          filter.operator === "isNull" ||
-                          filter.operator === "isNotNull"
-                        }
-                      />
+                      {shouldUseValueDropdown ? (
+                        <CustomDropdown
+                          ariaLabel="Filter value"
+                          value={filter.value}
+                          options={valueOptions}
+                          onChange={(value) => updateFilter(index, { value })}
+                          placeholder="Value"
+                        />
+                      ) : (
+                        <input
+                          aria-label="Filter value"
+                          inputMode={isNumericValue ? "numeric" : "text"}
+                          value={filter.value}
+                          placeholder="Value"
+                          onChange={(event) =>
+                            updateFilterValue(index, event.target.value)
+                          }
+                          disabled={
+                            filter.operator === "isNull" ||
+                            filter.operator === "isNotNull"
+                          }
+                        />
+                      )}
                       <button
                         type="button"
                         className="iconButton dangerButton"
@@ -734,82 +963,136 @@ function App() {
         </aside>
 
         <section className="workspace">
-          <div className="tableWrap">
+          <div
+            className={
+              [
+                "tableWrap",
+                isQueryTransitioning ? "tableWrapTransitioning" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")
+            }
+          >
             {!hasRunReport ? (
               <div className="emptyQueryState">
                 <Rows3 size={20} />
                 <strong>Ready when you are</strong>
-                <span>Select columns, add optional filters, and run a report.</span>
+                <span>
+                  Select columns, add optional filters, and run a report.
+                </span>
               </div>
             ) : null}
             {hasRunReport && !isLoading && rows.length === 0 ? (
               <div className="emptyQueryState">
                 <Search size={20} />
                 <strong>No results</strong>
-                <span>Try changing filters, selected columns, or the row limit.</span>
+                <span>
+                  Try changing filters, selected columns, or the row limit.
+                </span>
               </div>
             ) : null}
-            <table>
-              <thead>
-                <tr>
-                  {selectedColumns.map((column) => (
-                    <th
-                      key={column.columnName}
+            <div className="dataGrid" role="table">
+              <div className="dataGridHeader" role="row">
+                {columns.map((column) => {
+                  const isSelected = selectedColumnNames.includes(
+                    column.columnName,
+                  );
+
+                  return (
+                    <div
                       className={
-                        copiedCellId === `header:${column.columnName}`
-                          ? "copiedCell"
-                          : undefined
+                        isSelected
+                          ? "dataGridCell dataGridHeadCell"
+                          : "dataGridCell dataGridHeadCell dataGridCellHidden"
                       }
-                      onClick={() =>
-                        copyGridValue(`header:${column.columnName}`, column.columnName)
-                      }
+                      key={column.columnName}
+                      role="columnheader"
                     >
-                      {column.columnName}
-                      {copiedCellId === `header:${column.columnName}` ? (
-                        <span className="copyBubble">
-                          <Copy size={12} />
-                          Copied
-                        </span>
-                      ) : null}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
+                      <span className="dataGridContent">{column.columnName}</span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="dataGridBody" role="rowgroup">
                 {rows.map((row, index) => (
-                  <tr key={index}>
-                    {selectedColumns.map((column) => (
-                      <td
-                        key={column.columnName}
-                        className={
-                          copiedCellId === `${index}:${column.columnName}`
-                            ? "copiedCell"
-                            : undefined
-                        }
-                        onClick={() =>
-                          copyGridValue(
-                            `${index}:${column.columnName}`,
-                            row[column.columnName],
-                          )
-                        }
-                      >
-                        {row[column.columnName] === null ? (
-                          <span className="nullValue">NULL</span>
-                        ) : (
-                          String(row[column.columnName] ?? "")
-                        )}
-                        {copiedCellId === `${index}:${column.columnName}` ? (
-                          <span className="copyBubble">
-                            <Copy size={12} />
-                            Copied
+                  <div
+                    className={
+                      areRowsLeaving
+                        ? "dataGridRow dataGridRowLeaving"
+                        : "dataGridRow"
+                    }
+                    key={index}
+                    role="row"
+                  >
+                    {columns.map((column) => {
+                      const isSelected = selectedColumnNames.includes(
+                        column.columnName,
+                      );
+                      const cellId = `${index}:${column.columnName}`;
+
+                      return (
+                        <div
+                          className={[
+                            "dataGridCell",
+                            !isSelected ? "dataGridCellHidden" : "",
+                            copiedCellId === cellId ? "copiedCell" : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" ")}
+                          key={column.columnName}
+                          role="cell"
+                          onClick={
+                            isSelected
+                              ? () => copyGridValue(cellId, row[column.columnName])
+                              : undefined
+                          }
+                          onMouseEnter={
+                            isSelected
+                              ? () =>
+                                  showCellTooltipLater(
+                                    cellId,
+                                    row[column.columnName],
+                                  )
+                              : undefined
+                          }
+                          onMouseLeave={hideCellTooltip}
+                          onFocus={
+                            isSelected
+                              ? () =>
+                                  showCellTooltipLater(
+                                    cellId,
+                                    row[column.columnName],
+                                  )
+                              : undefined
+                          }
+                          onBlur={hideCellTooltip}
+                        >
+                          <span className="dataGridContent">
+                            {row[column.columnName] === null ? (
+                              <span className="nullValue">NULL</span>
+                            ) : (
+                              String(row[column.columnName] ?? "")
+                            )}
                           </span>
-                        ) : null}
-                      </td>
-                    ))}
-                  </tr>
+                          {copiedCellId === cellId ? (
+                            <span className="copyBubble">
+                              <Copy size={12} />
+                              Copied
+                            </span>
+                          ) : null}
+                          {hoveredCell?.id === cellId && copiedCellId !== cellId ? (
+                            <span className="cellTooltip">
+                              {hoveredCell.text}
+                            </span>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
                 ))}
-              </tbody>
-            </table>
+              </div>
+            </div>
           </div>
         </section>
       </form>
