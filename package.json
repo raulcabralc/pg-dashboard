@@ -1,0 +1,35 @@
+{
+  "name": "pg-interactive-dashboard",
+  "version": "0.1.0",
+  "description": "Plug-and-play PostgreSQL dashboard middleware for Express.",
+  "main": "backend/index.js",
+  "types": "backend/index.d.ts",
+  "files": [
+    "backend",
+    "frontend/dist",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "build": "npm --prefix frontend run build",
+    "example": "node examples/basic-server.js"
+  },
+  "keywords": [
+    "postgres",
+    "express",
+    "dashboard",
+    "crud",
+    "reports"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "express": ">=4.18.0"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "pg": "^8.11.5"
+  },
+  "devDependencies": {
+    "express": "^4.18.3"
+  }
+}
