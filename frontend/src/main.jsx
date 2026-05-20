@@ -7,6 +7,8 @@ import {
   Database,
   Download,
   Eye,
+  FileSpreadsheet,
+  FileText,
   Moon,
   Play,
   Plus,
@@ -66,16 +68,27 @@ function formatDataType(dataType) {
 
 function shouldSelectColumnByDefault(columnName) {
   const normalizedColumnName = columnName.toLowerCase().replace(/[_\s-]/g, "");
-  const hiddenColumnNames = new Set([
+  const auditColumnNames = new Set([
     "atualizado",
     "created",
     "createdat",
     "criado",
+    "datacriacao",
+    "dataatualizacao",
     "updated",
     "updatedat",
   ]);
+  const auditColumnPrefixes = [
+    "atualizado",
+    "created",
+    "criado",
+    "updated",
+  ];
 
-  return !hiddenColumnNames.has(normalizedColumnName);
+  return (
+    !auditColumnNames.has(normalizedColumnName) &&
+    !auditColumnPrefixes.some((prefix) => normalizedColumnName.startsWith(prefix))
+  );
 }
 
 function toCsv(rows) {
@@ -101,14 +114,72 @@ function toCsv(rows) {
   ].join("\n");
 }
 
-function downloadCsv(rows, fileName) {
-  const blob = new Blob([toCsv(rows)], { type: "text/csv;charset=utf-8" });
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function toExcelHtml(rows) {
+  if (!rows.length) {
+    return "";
+  }
+
+  const headers = Object.keys(rows[0]);
+  const headCells = headers
+    .map((header) => `<th>${escapeHtml(header)}</th>`)
+    .join("");
+  const bodyRows = rows
+    .map((row) => {
+      const cells = headers
+        .map((header) => {
+          const value = row[header];
+
+          return `<td>${value === null || value === undefined ? "" : escapeHtml(value)}</td>`;
+        })
+        .join("");
+
+      return `<tr>${cells}</tr>`;
+    })
+    .join("");
+
+  return `
+    <html>
+      <head>
+        <meta charset="UTF-8" />
+      </head>
+      <body>
+        <table>
+          <thead><tr>${headCells}</tr></thead>
+          <tbody>${bodyRows}</tbody>
+        </table>
+      </body>
+    </html>
+  `;
+}
+
+function downloadBlob(content, fileName, type) {
+  const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = fileName;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+function downloadCsv(rows, fileName) {
+  downloadBlob(toCsv(rows), fileName, "text/csv;charset=utf-8");
+}
+
+function downloadExcel(rows, fileName) {
+  downloadBlob(
+    toExcelHtml(rows),
+    fileName,
+    "application/vnd.ms-excel;charset=utf-8",
+  );
 }
 
 const operatorOptions = [
@@ -265,6 +336,68 @@ function CustomDropdown({ ariaLabel, value, options, onChange, placeholder }) {
               {option.value === value ? <Check size={15} /> : null}
             </button>
           ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ExportMenu({ disabled, onExportCsv, onExportExcel }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const rootRef = useRef(null);
+
+  useEffect(() => {
+    function handlePointerDown(event) {
+      if (!rootRef.current?.contains(event.target)) {
+        setIsOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, []);
+
+  function runExport(callback) {
+    callback();
+    setIsOpen(false);
+  }
+
+  return (
+    <div className="exportMenu" ref={rootRef}>
+      <button
+        type="button"
+        className="buttonWithIcon exportTrigger"
+        aria-label="Export rows"
+        aria-expanded={isOpen}
+        disabled={disabled}
+        onClick={() => setIsOpen((currentIsOpen) => !currentIsOpen)}
+      >
+        <Download size={16} />
+        Export
+        <ChevronDown className={isOpen ? "chevronOpen" : ""} size={15} />
+      </button>
+
+      {isOpen ? (
+        <div className="exportMenuList">
+          <button
+            type="button"
+            className="exportMenuItem"
+            onClick={() => runExport(onExportCsv)}
+          >
+            <FileText size={15} />
+            CSV
+          </button>
+          <button
+            type="button"
+            className="exportMenuItem"
+            onClick={() => runExport(onExportExcel)}
+          >
+            <FileSpreadsheet size={15} />
+            Excel
+          </button>
         </div>
       ) : null}
     </div>
@@ -785,17 +918,15 @@ function App() {
           >
             {themeName === "dark" ? <Sun size={17} /> : <Moon size={17} />}
           </button>
-          <button
-            type="button"
-            className="buttonWithIcon"
-            onClick={() =>
+          <ExportMenu
+            disabled={!rows.length}
+            onExportCsv={() =>
               downloadCsv(rows, `${selectedTableName || "report"}.csv`)
             }
-            disabled={!rows.length}
-          >
-            <Download size={16} />
-            Export CSV
-          </button>
+            onExportExcel={() =>
+              downloadExcel(rows, `${selectedTableName || "report"}.xls`)
+            }
+          />
         </div>
       </section>
 
@@ -1048,7 +1179,7 @@ function App() {
                               : undefined
                           }
                           onMouseEnter={
-                            isSelected
+                            isSelected && row[column.columnName] !== null && row[column.columnName] !== undefined
                               ? () =>
                                   showCellTooltipLater(
                                     cellId,
