@@ -315,11 +315,64 @@ async function listColumnValues(
   };
 }
 
+async function listFunctions(pool, schemaName = "public") {
+  const result = await pool.query(
+    `
+      SELECT
+        routine_name AS "routineName",
+        data_type AS "returnType"
+      FROM information_schema.routines
+      WHERE routine_schema = $1
+        AND routine_type = 'FUNCTION'
+      ORDER BY routine_name
+    `,
+    [schemaName],
+  );
+
+  return result.rows;
+}
+
+async function listFunctionParameters(pool, functionName, schemaName = "public") {
+  const functions = await listFunctions(pool, schemaName);
+
+  if (!functions.some((routine) => routine.routineName === functionName)) {
+    throw new BadRequestError("Invalid functionName.");
+  }
+
+  const result = await pool.query(
+    `
+      SELECT
+        p.parameter_name AS "parameterName",
+        p.data_type AS "dataType",
+        p.parameter_mode AS "parameterMode",
+        p.ordinal_position AS "ordinalPosition"
+      FROM information_schema.routines r
+      JOIN information_schema.parameters p
+        ON r.specific_name = p.specific_name
+       AND r.specific_schema = p.specific_schema
+      WHERE r.routine_schema = $1
+        AND r.routine_name = $2
+      ORDER BY p.ordinal_position
+    `,
+    [schemaName, functionName],
+  );
+
+  return result.rows.filter(
+    (parameter) =>
+      parameter.ordinalPosition > 0 &&
+      (parameter.parameterMode === "IN" ||
+        parameter.parameterMode === "INOUT" ||
+        parameter.parameterMode === null),
+  );
+}
+
 module.exports = {
   listTables,
   listRelations,
   listColumns,
   listColumnValues,
+  listFunctions,
+  listFunctionParameters,
   getCrudMetadata,
   getTableWhitelist,
   getDatabaseHealth,

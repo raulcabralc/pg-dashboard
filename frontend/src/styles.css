@@ -627,6 +627,47 @@ select:focus {
   font-weight: 600;
 }
 
+.modeTabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--field);
+  padding: 4px;
+}
+
+.modeTab {
+  min-height: 32px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 0 10px;
+}
+
+.modeTab:hover:not(:disabled) {
+  background: var(--controlHover);
+  color: var(--ink);
+  transform: none;
+}
+
+.modeTabActive,
+.modeTabActive:hover:not(:disabled) {
+  background: var(--surfaceSolid);
+  color: var(--primary);
+  box-shadow: var(--shadowSoft);
+}
+
+.modeTab:disabled {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
 .fieldGroup > span {
   color: var(--ink);
 }
@@ -764,6 +805,66 @@ select:focus {
   flex: 1 1 auto;
   overflow: hidden;
   padding: 2px 2px 0 0;
+}
+
+.functionsPanel,
+.functionParams {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+}
+
+.functionSignature {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  align-self: flex-start;
+  border: 1px solid var(--primaryBorder);
+  border-radius: 999px;
+  background: var(--primarySoft);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 6px 9px;
+}
+
+.functionParamList {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.functionParam {
+  display: grid;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--field);
+  padding: 10px;
+}
+
+.functionParam > span {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.functionParam .typePill {
+  justify-self: flex-start;
+  width: auto;
+  max-width: none;
+  font-size: 9px;
+  line-height: 1;
+  padding: 2px 5px;
 }
 
 .filters::after {

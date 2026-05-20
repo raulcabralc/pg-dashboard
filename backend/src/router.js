@@ -10,6 +10,7 @@ const {
   buildInsertQuery,
   buildReportQuery,
   buildUpdateQuery,
+  quoteIdentifier,
 } = require("./queryBuilder");
 const {
   getCrudMetadata,
@@ -17,6 +18,8 @@ const {
   getTableWhitelist,
   listColumns,
   listColumnValues,
+  listFunctionParameters,
+  listFunctions,
   listRelations,
 } = require("./metadata");
 
@@ -55,6 +58,14 @@ function assertEnumValues(crudMetadata, values = {}) {
         `${column.columnName} must be one of: ${column.enumValues.join(", ")}.`,
       );
     }
+  }
+}
+
+async function assertFunctionAllowed(pool, functionName, schemaName) {
+  const functions = await listFunctions(pool, schemaName);
+
+  if (!functions.some((routine) => routine.routineName === functionName)) {
+    throw new BadRequestError("Invalid functionName.");
   }
 }
 
@@ -107,6 +118,35 @@ function createDashboardRouter(config = {}) {
       next(error);
     }
   });
+
+  router.get("/api/functions", async (req, res, next) => {
+    try {
+      const functions = await listFunctions(pool, schemaName);
+      res.json({ schemaName, functions });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get(
+    "/api/functions/:functionName/parameters",
+    async (req, res, next) => {
+      try {
+        const parameters = await listFunctionParameters(
+          pool,
+          req.params.functionName,
+          schemaName,
+        );
+        res.json({
+          schemaName,
+          functionName: req.params.functionName,
+          parameters,
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
 
   router.get("/api/tables/:tableName/columns", async (req, res, next) => {
     try {
@@ -179,6 +219,55 @@ function createDashboardRouter(config = {}) {
         rowCount: Math.min(result.rowCount, reportLimit),
         limit: reportLimit,
         hasMore,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/api/functions/execute", async (req, res, next) => {
+    try {
+      const { functionName, parameters = [] } = req.body || {};
+
+      if (!functionName || typeof functionName !== "string") {
+        throw new BadRequestError("functionName is required.");
+      }
+
+      if (!Array.isArray(parameters)) {
+        throw new BadRequestError("parameters must be an array.");
+      }
+
+      await assertFunctionAllowed(pool, functionName, schemaName);
+      const expectedParameters = await listFunctionParameters(
+        pool,
+        functionName,
+        schemaName,
+      );
+
+      if (parameters.length !== expectedParameters.length) {
+        throw new BadRequestError(
+          `Function expects ${expectedParameters.length} parameters.`,
+        );
+      }
+
+      const placeholders = parameters.map((_, index) => `$${index + 1}`);
+      const qualifiedFunctionName = `${quoteIdentifier(schemaName)}.${quoteIdentifier(functionName)}`;
+      const queryText = `SELECT * FROM ${qualifiedFunctionName}(${placeholders.join(", ")})`;
+      const result = await pool.query(queryText, parameters);
+      const rows = result.rows.map((row) => {
+        const columnNames = Object.keys(row);
+
+        if (columnNames.length !== 1 || columnNames[0] !== functionName) {
+          return row;
+        }
+
+        return { result: row[functionName] };
+      });
+
+      res.json({
+        functionName,
+        rows,
+        rowCount: rows.length,
       });
     } catch (error) {
       next(error);

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import {
   Check,
   ChevronDown,
+  Code2,
   Copy,
   Database,
   Download,
@@ -15,6 +16,7 @@ import {
   Plus,
   Rows3,
   Search,
+  Send,
   SlidersHorizontal,
   Sparkles,
   Sun,
@@ -40,6 +42,22 @@ const dateTypes = new Set([
   "time with time zone",
   "timestamp without time zone",
   "timestamp with time zone",
+]);
+
+const functionInputNumberTypes = new Set([
+  "bigint",
+  "double precision",
+  "integer",
+  "numeric",
+  "real",
+  "smallint",
+]);
+
+const functionInputTextTypes = new Set([
+  "character",
+  "character varying",
+  "text",
+  "uuid",
 ]);
 
 const compactDataTypes = new Map([
@@ -668,6 +686,7 @@ function App() {
     return localStorage.getItem("pgDashboardTheme") || "light";
   });
   const [databaseName, setDatabaseName] = useState("");
+  const [appMode, setAppMode] = useState("tables");
   const [relations, setRelations] = useState([]);
   const [selectedTableName, setSelectedTableName] = useState("");
   const [columns, setColumns] = useState([]);
@@ -696,11 +715,21 @@ function App() {
   const [isSavingRecord, setIsSavingRecord] = useState(false);
   const [isLoadingRecord, setIsLoadingRecord] = useState(false);
   const [isQueryScrolledToBottom, setIsQueryScrolledToBottom] = useState(true);
+  const [functions, setFunctions] = useState([]);
+  const [selectedFunctionName, setSelectedFunctionName] = useState("");
+  const [functionParameters, setFunctionParameters] = useState([]);
+  const [functionValues, setFunctionValues] = useState({});
+  const [functionRows, setFunctionRows] = useState([]);
+  const [hasRunFunction, setHasRunFunction] = useState(false);
+  const [isExecutingFunction, setIsExecutingFunction] = useState(false);
+  const [isFunctionResultScrolledToBottom, setIsFunctionResultScrolledToBottom] =
+    useState(true);
   const copiedTimeoutRef = useRef(null);
   const hoverTimeoutRef = useRef(null);
   const queryTransitionTimeoutRef = useRef(null);
   const crudDrawerCloseTimeoutRef = useRef(null);
   const tableWrapRef = useRef(null);
+  const functionResultWrapRef = useRef(null);
 
   const selectedColumns = useMemo(
     () =>
@@ -731,9 +760,90 @@ function App() {
     [crudMetadata],
   );
   const isCrudDrawerOpen = Boolean(crudDrawer.mode);
+  const selectedFunction = useMemo(
+    () =>
+      functions.find(
+        (candidate) => candidate.routineName === selectedFunctionName,
+      ),
+    [functions, selectedFunctionName],
+  );
 
   function getColumnValueOptionsKey(tableName, columnName) {
     return `${tableName}:${columnName}`;
+  }
+
+  function getFunctionParameterKey(parameter, index) {
+    return parameter.parameterName || `parameter${index + 1}`;
+  }
+
+  function sanitizeFunctionValue(value, dataType) {
+    if (functionInputNumberTypes.has(dataType)) {
+      return value
+        .replace(/[^\d.-]/g, "")
+        .replace(/(?!^)-/g, "")
+        .replace(/(\..*)\./g, "$1");
+    }
+
+    return value;
+  }
+
+  function updateFunctionValue(parameter, index, value) {
+    setFunctionValues((currentValues) => ({
+      ...currentValues,
+      [getFunctionParameterKey(parameter, index)]: sanitizeFunctionValue(
+        value,
+        parameter.dataType,
+      ),
+    }));
+  }
+
+  function normalizeFunctionValue(parameter, index) {
+    const value = functionValues[getFunctionParameterKey(parameter, index)];
+
+    if (value === "") {
+      return null;
+    }
+
+    if (functionInputNumberTypes.has(parameter.dataType)) {
+      return Number(value);
+    }
+
+    if (parameter.dataType === "boolean") {
+      return value === true || value === "true";
+    }
+
+    return value;
+  }
+
+  async function executeFunction() {
+    if (!selectedFunctionName) {
+      return;
+    }
+
+    setIsExecutingFunction(true);
+
+    try {
+      const response = await fetch("./api/functions/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          functionName: selectedFunctionName,
+          parameters: functionParameters.map(normalizeFunctionValue),
+        }),
+      });
+      const payload = await parseApiResponse(
+        response,
+        "Could not execute function.",
+      );
+
+      setFunctionRows(payload.rows || []);
+      setHasRunFunction(true);
+      toast.success(`${payload.rowCount || 0} rows returned`);
+    } catch (error) {
+      toast.error(error.message);
+    } finally {
+      setIsExecutingFunction(false);
+    }
   }
 
   function updateQueryFadeState(element) {
@@ -771,7 +881,55 @@ function App() {
         setSelectedTableName(nextRelations[0]?.tableName || "");
       })
       .catch((error) => toast.error(error.message));
+
+    fetch("./api/functions")
+      .then((response) =>
+        parseApiResponse(response, "Could not load functions."),
+      )
+      .then((payload) => {
+        const nextFunctions = payload.functions || [];
+
+        setFunctions(nextFunctions);
+        setSelectedFunctionName(nextFunctions[0]?.routineName || "");
+        if (!nextFunctions.length) {
+          setAppMode("tables");
+        }
+      })
+      .catch((error) => toast.error(error.message));
   }, []);
+
+  useEffect(() => {
+    if (!selectedFunctionName) {
+      setFunctionParameters([]);
+      setFunctionValues({});
+      setFunctionRows([]);
+      setHasRunFunction(false);
+      return;
+    }
+
+    fetch(
+      `./api/functions/${encodeURIComponent(selectedFunctionName)}/parameters`,
+    )
+      .then((response) =>
+        parseApiResponse(response, "Could not load function parameters."),
+      )
+      .then((payload) => {
+        const nextParameters = payload.parameters || [];
+
+        setFunctionParameters(nextParameters);
+        setFunctionValues(
+          Object.fromEntries(
+            nextParameters.map((parameter, index) => [
+              getFunctionParameterKey(parameter, index),
+              "",
+            ]),
+          ),
+        );
+        setFunctionRows([]);
+        setHasRunFunction(false);
+      })
+      .catch((error) => toast.error(error.message));
+  }, [selectedFunctionName]);
 
   useEffect(() => {
     if (!selectedTableName) {
@@ -939,6 +1097,21 @@ function App() {
 
     return () => window.cancelAnimationFrame(frameId);
   }, [rows, selectedColumnNames, hasRunReport, isLoading]);
+
+  useEffect(() => {
+    const frameId = window.requestAnimationFrame(() => {
+      if (functionResultWrapRef.current) {
+        const element = functionResultWrapRef.current;
+        const hasVerticalScroll = element.scrollHeight > element.clientHeight + 2;
+        const isAtBottom =
+          element.scrollTop + element.clientHeight >= element.scrollHeight - 2;
+
+        setIsFunctionResultScrolledToBottom(!hasVerticalScroll || isAtBottom);
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [functionRows, hasRunFunction]);
 
   function updateFilterValue(index, value) {
     setFilters((currentFilters) =>
@@ -1175,7 +1348,9 @@ function App() {
     });
 
     if (incompleteTimestampColumn) {
-      toast.error(`${incompleteTimestampColumn.columnName} needs date and time.`);
+      toast.error(
+        `${incompleteTimestampColumn.columnName} needs date and time.`,
+      );
       return false;
     }
 
@@ -1375,33 +1550,45 @@ function App() {
         </div>
         <div className="toolbarActions">
           <div className="resultMeta">
-            <Rows3 size={15} />
+            {appMode === "functions" ? (
+              <Code2 size={15} />
+            ) : (
+              <Rows3 size={15} />
+            )}
             <span>
-              {rows.length ? `${rows.length} rows loaded` : "Ready to run"}
+              {appMode === "functions"
+                ? functionRows.length
+                  ? `${functionRows.length} rows returned`
+                  : "Ready to execute"
+                : rows.length
+                  ? `${rows.length} rows loaded`
+                  : "Ready to run"}
             </span>
-            {hasMoreRows ? (
+            {appMode === "tables" && hasMoreRows ? (
               <span className="moreRowsBadge">
                 <Sparkles size={12} />
                 More after limit
               </span>
-            ) : rows.length ? (
+            ) : appMode === "tables" && rows.length ? (
               <span className="allRowsBadge">All loaded</span>
             ) : null}
           </div>
-          <label className="limitControl">
-            <span className="limitLabel">
-              <SlidersHorizontal size={14} />
-              Limit
-            </span>
-            <input
-              aria-label="Row limit"
-              inputMode="numeric"
-              value={rowLimit}
-              onChange={(event) =>
-                setRowLimit(event.target.value.replace(/\D/g, "").slice(0, 3))
-              }
-            />
-          </label>
+          {appMode === "tables" ? (
+            <label className="limitControl">
+              <span className="limitLabel">
+                <SlidersHorizontal size={14} />
+                Limit
+              </span>
+              <input
+                aria-label="Row limit"
+                inputMode="numeric"
+                value={rowLimit}
+                onChange={(event) =>
+                  setRowLimit(event.target.value.replace(/\D/g, "").slice(0, 3))
+                }
+              />
+            </label>
+          ) : null}
           <button
             type="button"
             className="iconButton"
@@ -1419,389 +1606,685 @@ function App() {
             {themeName === "dark" ? <Sun size={17} /> : <Moon size={17} />}
           </button>
           <ExportMenu
-            disabled={!rows.length}
+            disabled={
+              appMode === "functions" ? !functionRows.length : !rows.length
+            }
             onExportCsv={() =>
-              downloadCsv(rows, `${selectedTableName || "report"}.csv`)
+              downloadCsv(
+                appMode === "functions" ? functionRows : rows,
+                `${appMode === "functions" ? selectedFunctionName || "function" : selectedTableName || "report"}.csv`,
+              )
             }
             onExportExcel={() =>
-              downloadExcel(rows, `${selectedTableName || "report"}.xls`)
+              downloadExcel(
+                appMode === "functions" ? functionRows : rows,
+                `${appMode === "functions" ? selectedFunctionName || "function" : selectedTableName || "report"}.xls`,
+              )
             }
           />
-          <button
-            type="button"
-            className="primary buttonWithIcon"
-            onClick={openCreateDrawer}
-            disabled={!crudMetadata?.canCreate}
-            title={
-              crudMetadata?.canCreate
-                ? "Create record"
-                : "This relation is read-only"
-            }
-          >
-            <Plus size={16} />
-            New
-          </button>
+          {appMode === "tables" ? (
+            <button
+              type="button"
+              className="primary buttonWithIcon"
+              onClick={openCreateDrawer}
+              disabled={!crudMetadata?.canCreate}
+              title={
+                crudMetadata?.canCreate
+                  ? "Create record"
+                  : "This relation is read-only"
+              }
+            >
+              <Plus size={16} />
+              New
+            </button>
+          ) : null}
         </div>
       </section>
 
-      <form className="layout" onSubmit={generateReport}>
+      <form
+        className="layout"
+        onSubmit={(event) => {
+          if (appMode === "functions") {
+            event.preventDefault();
+            executeFunction();
+            return;
+          }
+
+          generateReport(event);
+        }}
+      >
         <aside className="panel">
-          <div className="fieldGroup">
-            <span>Table</span>
-            <CustomDropdown
-              ariaLabel="Select table"
-              value={selectedTableName}
-              options={tableOptions}
-              onChange={setSelectedTableName}
-              placeholder="Select table"
-            />
-          </div>
-
-          <div className="panelSection">
-            <div className="groupTitle">Columns</div>
-            <div className="checkList">
-              {columns.map((column) => (
-                <label key={column.columnName} className="checkRow">
-                  <input
-                    type="checkbox"
-                    checked={selectedColumnNames.includes(column.columnName)}
-                    onChange={() => toggleColumn(column.columnName)}
-                  />
-                  <span className="checkDot" aria-hidden="true" />
-                  <span className="columnName">{column.columnName}</span>
-                  <small className="typePill" title={column.dataType}>
-                    {formatDataType(column.dataType)}
-                  </small>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <div className="panelSection filters">
-            <div className="filtersHeader">
-              <div>
-                <div className="groupTitle">Filters</div>
-                <p className="sectionHint">Refine rows before running.</p>
-              </div>
-              <div className="filtersActions">
-                <button
-                  type="button"
-                  className="iconButton clearFiltersButton"
-                  onClick={clearFilters}
-                  disabled={!filters.length}
-                  title="Clear filters"
-                >
-                  <X size={17} />
-                </button>
-                <button
-                  type="button"
-                  className="iconButton addFilterButton"
-                  onClick={addFilter}
-                  title="Add filter"
-                >
-                  <Plus size={18} />
-                </button>
-              </div>
-            </div>
-
-            <div className="filterList">
-              {!filters.length ? (
-                <div className="emptyFilters">
-                  <Search size={16} />
-                  <span>No filters applied</span>
-                </div>
-              ) : null}
-
-              {filters.map((filter, index) => {
-                const column = columns.find(
-                  (candidate) => candidate.columnName === filter.columnName,
-                );
-                const isNumericValue = numberTypes.has(column?.dataType);
-                const valueOptions =
-                  columnValueOptions[
-                    getColumnValueOptionsKey(
-                      selectedTableName,
-                      filter.columnName,
-                    )
-                  ] || [];
-                const shouldUseValueDropdown =
-                  valueOptions.length > 0 &&
-                  filter.operator !== "isNull" &&
-                  filter.operator !== "isNotNull";
-
-                return (
-                  <div
-                    key={filter.id}
-                    className={
-                      removingFilterIds.includes(filter.id)
-                        ? "filterCard filterCardLeaving"
-                        : "filterCard"
-                    }
-                  >
-                    <div className="filterLabel">
-                      <span>Where</span>
-                      <strong>#{index + 1}</strong>
-                    </div>
-                    <CustomDropdown
-                      ariaLabel="Filter column"
-                      value={filter.columnName}
-                      options={columnOptions}
-                      onChange={(columnName) =>
-                        updateFilterColumn(index, columnName)
-                      }
-                      placeholder="Column"
-                    />
-                    <CustomDropdown
-                      ariaLabel="Filter operator"
-                      value={filter.operator}
-                      options={getOperatorOptionsForDataType(column?.dataType)}
-                      onChange={(operator) => updateFilter(index, { operator })}
-                      placeholder="Operator"
-                    />
-                    <div className="filterValueRow">
-                      {shouldUseValueDropdown ? (
-                        <CustomDropdown
-                          ariaLabel="Filter value"
-                          value={filter.value}
-                          options={valueOptions}
-                          onChange={(value) => updateFilter(index, { value })}
-                          placeholder="Value"
-                        />
-                      ) : (
-                        <input
-                          aria-label="Filter value"
-                          inputMode={isNumericValue ? "numeric" : "text"}
-                          value={filter.value}
-                          placeholder="Value"
-                          onChange={(event) =>
-                            updateFilterValue(index, event.target.value)
-                          }
-                          disabled={
-                            filter.operator === "isNull" ||
-                            filter.operator === "isNotNull"
-                          }
-                        />
-                      )}
-                      <button
-                        type="button"
-                        className="iconButton dangerButton"
-                        onClick={() => removeFilter(index)}
-                        title="Remove filter"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
+          <div className="modeTabs" role="tablist" aria-label="Dashboard mode">
             <button
-              className="primary buttonWithIcon"
-              type="submit"
-              disabled={isLoading || !selectedColumnNames.length}
+              type="button"
+              className={
+                appMode === "tables" ? "modeTab modeTabActive" : "modeTab"
+              }
+              onClick={() => setAppMode("tables")}
             >
-              <Play size={16} />
-              {isLoading ? "Running..." : "Run"}
+              <Rows3 size={15} />
+              Tables
+            </button>
+            <button
+              type="button"
+              className={
+                appMode === "functions" ? "modeTab modeTabActive" : "modeTab"
+              }
+              onClick={() => setAppMode("functions")}
+              disabled={!functions.length}
+              title={
+                functions.length
+                  ? "Open functions"
+                  : "No functions found in the database"
+              }
+            >
+              <Code2 size={15} />
+              Functions
             </button>
           </div>
-        </aside>
 
-        <section className="workspace">
-          <div
-            ref={tableWrapRef}
-            className={[
-              "tableWrap",
-              isQueryScrolledToBottom ? "tableWrapAtBottom" : "",
-              isQueryTransitioning ? "tableWrapTransitioning" : "",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-            onScroll={(event) => updateQueryFadeState(event.currentTarget)}
-          >
-            {!hasRunReport ? (
-              <div className="emptyQueryState">
-                <Rows3 size={20} />
-                <strong>Ready when you are</strong>
-                <span>
-                  Select columns, add optional filters, and run a report.
-                </span>
-              </div>
-            ) : null}
-            {hasRunReport && !isLoading && rows.length === 0 ? (
-              <div className="emptyQueryState">
-                <Search size={20} />
-                <strong>No results</strong>
-                <span>
-                  Try changing filters, selected columns, or the row limit.
-                </span>
-              </div>
-            ) : null}
-            <div className="dataGrid" role="table">
-              <div className="dataGridHeader" role="row">
-                {crudMetadata?.isWritable ? (
-                  <div
-                    className="dataGridCell dataGridHeadCell dataGridActionCell"
-                    role="columnheader"
-                  >
-                    <span className="dataGridContent">Actions</span>
-                  </div>
-                ) : null}
-                {columns.map((column) => {
-                  const isSelected = selectedColumnNames.includes(
-                    column.columnName,
-                  );
-
-                  return (
-                    <div
-                      className={
-                        isSelected
-                          ? "dataGridCell dataGridHeadCell"
-                          : "dataGridCell dataGridHeadCell dataGridCellHidden"
-                      }
-                      key={column.columnName}
-                      role="columnheader"
-                    >
-                      <span className="dataGridContent">
-                        {column.columnName}
-                      </span>
-                    </div>
-                  );
-                })}
-                <div
-                  className="dataGridCell dataGridHeadCell dataGridFillerCell"
-                  role="presentation"
+          {appMode === "tables" ? (
+            <>
+              <div className="fieldGroup">
+                <span>Table</span>
+                <CustomDropdown
+                  ariaLabel="Select table"
+                  value={selectedTableName}
+                  options={tableOptions}
+                  onChange={setSelectedTableName}
+                  placeholder="Select table"
                 />
               </div>
 
-              <div className="dataGridBody" role="rowgroup">
-                {rows.map((row, index) => (
-                  <div
-                    className={
-                      areRowsLeaving
-                        ? "dataGridRow dataGridRowLeaving"
-                        : "dataGridRow"
-                    }
-                    key={index}
-                    role="row"
-                  >
-                    {crudMetadata?.isWritable
-                      ? (() => {
-                          const primaryKey = getPrimaryKeyFromRow(row);
+              <div className="panelSection">
+                <div className="groupTitle">Columns</div>
+                <div className="checkList">
+                  {columns.map((column) => (
+                    <label key={column.columnName} className="checkRow">
+                      <input
+                        type="checkbox"
+                        checked={selectedColumnNames.includes(
+                          column.columnName,
+                        )}
+                        onChange={() => toggleColumn(column.columnName)}
+                      />
+                      <span className="checkDot" aria-hidden="true" />
+                      <span className="columnName">{column.columnName}</span>
+                      <small className="typePill" title={column.dataType}>
+                        {formatDataType(column.dataType)}
+                      </small>
+                    </label>
+                  ))}
+                </div>
+              </div>
 
-                          return (
-                            <div
-                              className="dataGridCell dataGridActionCell"
-                              role="cell"
-                            >
-                              <div className="rowActions">
-                                <button
-                                  type="button"
-                                  className="iconButton"
-                                  onClick={() => openEditDrawer(row)}
-                                  disabled={
-                                    !crudMetadata?.canUpdate ||
-                                    !primaryKey ||
-                                    isLoadingRecord
-                                  }
-                                  title="Edit row"
-                                >
-                                  <Pencil size={14} />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="iconButton dangerButton"
-                                  onClick={() => openDeleteDrawer(row)}
-                                  disabled={
-                                    !crudMetadata?.canDelete || !primaryKey
-                                  }
-                                  title="Delete row"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })()
-                      : null}
-                    {columns.map((column) => {
-                      const isSelected = selectedColumnNames.includes(
-                        column.columnName,
-                      );
-                      const cellId = `${index}:${column.columnName}`;
+              <div className="panelSection filters">
+                <div className="filtersHeader">
+                  <div>
+                    <div className="groupTitle">Filters</div>
+                    <p className="sectionHint">Refine rows before running.</p>
+                  </div>
+                  <div className="filtersActions">
+                    <button
+                      type="button"
+                      className="iconButton clearFiltersButton"
+                      onClick={clearFilters}
+                      disabled={!filters.length}
+                      title="Clear filters"
+                    >
+                      <X size={17} />
+                    </button>
+                    <button
+                      type="button"
+                      className="iconButton addFilterButton"
+                      onClick={addFilter}
+                      title="Add filter"
+                    >
+                      <Plus size={18} />
+                    </button>
+                  </div>
+                </div>
 
-                      return (
-                        <div
-                          className={[
-                            "dataGridCell",
-                            !isSelected ? "dataGridCellHidden" : "",
-                            copiedCellId === cellId ? "copiedCell" : "",
-                          ]
-                            .filter(Boolean)
-                            .join(" ")}
-                          key={column.columnName}
-                          role="cell"
-                          onClick={() =>
-                            isSelected
-                              ? copyGridValue(cellId, row[column.columnName])
-                              : undefined
-                          }
-                          onMouseEnter={
-                            isSelected &&
-                            row[column.columnName] !== null &&
-                            row[column.columnName] !== undefined
-                              ? () =>
-                                  showCellTooltipLater(
-                                    cellId,
-                                    row[column.columnName],
-                                  )
-                              : undefined
-                          }
-                          onMouseLeave={hideCellTooltip}
-                          onFocus={
-                            isSelected &&
-                            row[column.columnName] !== null &&
-                            row[column.columnName] !== undefined
-                              ? () =>
-                                  showCellTooltipLater(
-                                    cellId,
-                                    row[column.columnName],
-                                  )
-                              : undefined
-                          }
-                          onBlur={hideCellTooltip}
-                        >
-                          <span className="dataGridContent">
-                            {row[column.columnName] === null ? (
-                              <span className="nullValue">NULL</span>
-                            ) : (
-                              String(row[column.columnName] ?? "")
-                            )}
-                          </span>
-                          {copiedCellId === cellId ? (
-                            <span className="copyBubble">
-                              <Copy size={12} />
-                              Copied
-                            </span>
-                          ) : null}
-                          {hoveredCell?.id === cellId &&
-                          copiedCellId !== cellId ? (
-                            <span className="cellTooltip">
-                              {hoveredCell.text}
-                            </span>
-                          ) : null}
+                <div className="filterList">
+                  {!filters.length ? (
+                    <div className="emptyFilters">
+                      <Search size={16} />
+                      <span>No filters applied</span>
+                    </div>
+                  ) : null}
+
+                  {filters.map((filter, index) => {
+                    const column = columns.find(
+                      (candidate) => candidate.columnName === filter.columnName,
+                    );
+                    const isNumericValue = numberTypes.has(column?.dataType);
+                    const valueOptions =
+                      columnValueOptions[
+                        getColumnValueOptionsKey(
+                          selectedTableName,
+                          filter.columnName,
+                        )
+                      ] || [];
+                    const shouldUseValueDropdown =
+                      valueOptions.length > 0 &&
+                      filter.operator !== "isNull" &&
+                      filter.operator !== "isNotNull";
+
+                    return (
+                      <div
+                        key={filter.id}
+                        className={
+                          removingFilterIds.includes(filter.id)
+                            ? "filterCard filterCardLeaving"
+                            : "filterCard"
+                        }
+                      >
+                        <div className="filterLabel">
+                          <span>Where</span>
+                          <strong>#{index + 1}</strong>
                         </div>
-                      );
-                    })}
+                        <CustomDropdown
+                          ariaLabel="Filter column"
+                          value={filter.columnName}
+                          options={columnOptions}
+                          onChange={(columnName) =>
+                            updateFilterColumn(index, columnName)
+                          }
+                          placeholder="Column"
+                        />
+                        <CustomDropdown
+                          ariaLabel="Filter operator"
+                          value={filter.operator}
+                          options={getOperatorOptionsForDataType(
+                            column?.dataType,
+                          )}
+                          onChange={(operator) =>
+                            updateFilter(index, { operator })
+                          }
+                          placeholder="Operator"
+                        />
+                        <div className="filterValueRow">
+                          {shouldUseValueDropdown ? (
+                            <CustomDropdown
+                              ariaLabel="Filter value"
+                              value={filter.value}
+                              options={valueOptions}
+                              onChange={(value) =>
+                                updateFilter(index, { value })
+                              }
+                              placeholder="Value"
+                            />
+                          ) : (
+                            <input
+                              aria-label="Filter value"
+                              inputMode={isNumericValue ? "numeric" : "text"}
+                              value={filter.value}
+                              placeholder="Value"
+                              onChange={(event) =>
+                                updateFilterValue(index, event.target.value)
+                              }
+                              disabled={
+                                filter.operator === "isNull" ||
+                                filter.operator === "isNotNull"
+                              }
+                            />
+                          )}
+                          <button
+                            type="button"
+                            className="iconButton dangerButton"
+                            onClick={() => removeFilter(index)}
+                            title="Remove filter"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <button
+                  className="primary buttonWithIcon"
+                  type="submit"
+                  disabled={isLoading || !selectedColumnNames.length}
+                >
+                  <Play size={16} />
+                  {isLoading ? "Running..." : "Run"}
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="functionsPanel">
+              <div className="fieldGroup">
+                <span>Function</span>
+                <CustomDropdown
+                  ariaLabel="Select function"
+                  value={selectedFunctionName}
+                  options={functions.map((routine) => ({
+                    value: routine.routineName,
+                    label: routine.routineName,
+                  }))}
+                  onChange={setSelectedFunctionName}
+                  placeholder="Select function"
+                />
+              </div>
+
+              {selectedFunction ? (
+                <div className="functionSignature">
+                  <Code2 size={15} />
+                  <span>{selectedFunction.returnType || "unknown"}</span>
+                </div>
+              ) : null}
+
+              <div className="panelSection functionParams">
+                <div>
+                  <div className="groupTitle">Parameters</div>
+                  <p className="sectionHint">
+                    Fill values and execute the stored function.
+                  </p>
+                </div>
+
+                <div className="functionParamList">
+                  {!functionParameters.length ? (
+                    <div className="emptyFilters">
+                      <Sparkles size={16} />
+                      <span>No parameters required</span>
+                    </div>
+                  ) : null}
+
+                  {functionParameters.map((parameter, index) => {
+                    const parameterKey = getFunctionParameterKey(
+                      parameter,
+                      index,
+                    );
+                    const value = functionValues[parameterKey] ?? "";
+
+                    return (
+                      <label className="functionParam" key={parameterKey}>
+                        <span>
+                          {parameter.parameterName || `parameter ${index + 1}`}
+                        </span>
+                        {parameter.dataType === "boolean" ? (
+                          <CustomDropdown
+                            ariaLabel={`${parameterKey} value`}
+                            value={String(value)}
+                            options={[
+                              { value: "", label: "Null" },
+                              { value: "true", label: "True" },
+                              { value: "false", label: "False" },
+                            ]}
+                            onChange={(nextValue) =>
+                              updateFunctionValue(parameter, index, nextValue)
+                            }
+                            placeholder="Value"
+                          />
+                        ) : (
+                          <input
+                            type="text"
+                            inputMode={
+                              functionInputNumberTypes.has(parameter.dataType)
+                                ? "decimal"
+                                : "text"
+                            }
+                            value={value}
+                            onChange={(event) =>
+                              updateFunctionValue(
+                                parameter,
+                                index,
+                                event.target.value,
+                              )
+                            }
+                            placeholder="Value"
+                          />
+                        )}
+                        <small className="typePill">
+                          {formatDataType(parameter.dataType)}
+                        </small>
+                      </label>
+                    );
+                  })}
+                </div>
+
+                <button
+                  className="primary buttonWithIcon"
+                  type="button"
+                  disabled={!selectedFunctionName || isExecutingFunction}
+                  onClick={executeFunction}
+                >
+                  <Send size={16} />
+                  {isExecutingFunction ? "Executing..." : "Execute Function"}
+                </button>
+              </div>
+            </div>
+          )}
+        </aside>
+
+        <section className="workspace">
+          {appMode === "functions" ? (
+            <div
+              ref={functionResultWrapRef}
+              className={[
+                "tableWrap",
+                isFunctionResultScrolledToBottom ? "tableWrapAtBottom" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              onScroll={(event) => {
+                const element = event.currentTarget;
+                const hasVerticalScroll =
+                  element.scrollHeight > element.clientHeight + 2;
+                const isAtBottom =
+                  element.scrollTop + element.clientHeight >=
+                  element.scrollHeight - 2;
+
+                setIsFunctionResultScrolledToBottom(
+                  !hasVerticalScroll || isAtBottom,
+                );
+              }}
+            >
+              {!hasRunFunction ? (
+                <div className="emptyQueryState">
+                  <Code2 size={20} />
+                  <strong>Ready to execute</strong>
+                  <span>Select a function, fill parameters, and run it.</span>
+                </div>
+              ) : null}
+
+              {hasRunFunction && functionRows.length === 0 ? (
+                <div className="emptyQueryState">
+                  <Search size={20} />
+                  <strong>No rows returned</strong>
+                  <span>The function executed, but returned no rows.</span>
+                </div>
+              ) : null}
+
+              {hasRunFunction && functionRows.length > 0 ? (
+                <div className="dataGrid" role="table">
+                  <div className="dataGridHeader" role="row">
+                    {Object.keys(functionRows[0]).map((columnName) => (
+                      <div
+                        className="dataGridCell dataGridHeadCell"
+                        key={columnName}
+                        role="columnheader"
+                      >
+                        <span className="dataGridContent">{columnName}</span>
+                      </div>
+                    ))}
                     <div
-                      className="dataGridCell dataGridFillerCell"
+                      className="dataGridCell dataGridHeadCell dataGridFillerCell"
                       role="presentation"
                     />
                   </div>
-                ))}
+                  <div className="dataGridBody" role="rowgroup">
+                    {functionRows.map((row, rowIndex) => (
+                      <div className="dataGridRow" key={rowIndex} role="row">
+                        {Object.keys(functionRows[0]).map((columnName) => {
+                          const cellId = `function:${rowIndex}:${columnName}`;
+
+                          return (
+                            <div
+                              className={[
+                                "dataGridCell",
+                                copiedCellId === cellId ? "copiedCell" : "",
+                              ]
+                                .filter(Boolean)
+                                .join(" ")}
+                              key={columnName}
+                              role="cell"
+                              onClick={() =>
+                                copyGridValue(cellId, row[columnName])
+                              }
+                              onMouseEnter={
+                                row[columnName] !== null &&
+                                row[columnName] !== undefined
+                                  ? () =>
+                                      showCellTooltipLater(
+                                        cellId,
+                                        row[columnName],
+                                      )
+                                  : undefined
+                              }
+                              onMouseLeave={hideCellTooltip}
+                              onFocus={
+                                row[columnName] !== null &&
+                                row[columnName] !== undefined
+                                  ? () =>
+                                      showCellTooltipLater(
+                                        cellId,
+                                        row[columnName],
+                                      )
+                                  : undefined
+                              }
+                              onBlur={hideCellTooltip}
+                            >
+                              <span className="dataGridContent">
+                                {row[columnName] === null ? (
+                                  <span className="nullValue">NULL</span>
+                                ) : (
+                                  String(row[columnName] ?? "")
+                                )}
+                              </span>
+                              {copiedCellId === cellId ? (
+                                <span className="copyBubble">
+                                  <Copy size={12} />
+                                  Copied
+                                </span>
+                              ) : null}
+                              {hoveredCell?.id === cellId &&
+                              copiedCellId !== cellId ? (
+                                <span className="cellTooltip">
+                                  {hoveredCell.text}
+                                </span>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                        <div
+                          className="dataGridCell dataGridFillerCell"
+                          role="presentation"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div
+              ref={tableWrapRef}
+              className={[
+                "tableWrap",
+                isQueryScrolledToBottom ? "tableWrapAtBottom" : "",
+                isQueryTransitioning ? "tableWrapTransitioning" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              onScroll={(event) => updateQueryFadeState(event.currentTarget)}
+            >
+              {!hasRunReport ? (
+                <div className="emptyQueryState">
+                  <Rows3 size={20} />
+                  <strong>Ready when you are</strong>
+                  <span>
+                    Select columns, add optional filters, and run a report.
+                  </span>
+                </div>
+              ) : null}
+              {hasRunReport && !isLoading && rows.length === 0 ? (
+                <div className="emptyQueryState">
+                  <Search size={20} />
+                  <strong>No results</strong>
+                  <span>
+                    Try changing filters, selected columns, or the row limit.
+                  </span>
+                </div>
+              ) : null}
+              <div className="dataGrid" role="table">
+                <div className="dataGridHeader" role="row">
+                  {crudMetadata?.isWritable ? (
+                    <div
+                      className="dataGridCell dataGridHeadCell dataGridActionCell"
+                      role="columnheader"
+                    >
+                      <span className="dataGridContent">Actions</span>
+                    </div>
+                  ) : null}
+                  {columns.map((column) => {
+                    const isSelected = selectedColumnNames.includes(
+                      column.columnName,
+                    );
+
+                    return (
+                      <div
+                        className={
+                          isSelected
+                            ? "dataGridCell dataGridHeadCell"
+                            : "dataGridCell dataGridHeadCell dataGridCellHidden"
+                        }
+                        key={column.columnName}
+                        role="columnheader"
+                      >
+                        <span className="dataGridContent">
+                          {column.columnName}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  <div
+                    className="dataGridCell dataGridHeadCell dataGridFillerCell"
+                    role="presentation"
+                  />
+                </div>
+
+                <div className="dataGridBody" role="rowgroup">
+                  {rows.map((row, index) => (
+                    <div
+                      className={
+                        areRowsLeaving
+                          ? "dataGridRow dataGridRowLeaving"
+                          : "dataGridRow"
+                      }
+                      key={index}
+                      role="row"
+                    >
+                      {crudMetadata?.isWritable
+                        ? (() => {
+                            const primaryKey = getPrimaryKeyFromRow(row);
+
+                            return (
+                              <div
+                                className="dataGridCell dataGridActionCell"
+                                role="cell"
+                              >
+                                <div className="rowActions">
+                                  <button
+                                    type="button"
+                                    className="iconButton"
+                                    onClick={() => openEditDrawer(row)}
+                                    disabled={
+                                      !crudMetadata?.canUpdate ||
+                                      !primaryKey ||
+                                      isLoadingRecord
+                                    }
+                                    title="Edit row"
+                                  >
+                                    <Pencil size={14} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="iconButton dangerButton"
+                                    onClick={() => openDeleteDrawer(row)}
+                                    disabled={
+                                      !crudMetadata?.canDelete || !primaryKey
+                                    }
+                                    title="Delete row"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })()
+                        : null}
+                      {columns.map((column) => {
+                        const isSelected = selectedColumnNames.includes(
+                          column.columnName,
+                        );
+                        const cellId = `${index}:${column.columnName}`;
+
+                        return (
+                          <div
+                            className={[
+                              "dataGridCell",
+                              !isSelected ? "dataGridCellHidden" : "",
+                              copiedCellId === cellId ? "copiedCell" : "",
+                            ]
+                              .filter(Boolean)
+                              .join(" ")}
+                            key={column.columnName}
+                            role="cell"
+                            onClick={() =>
+                              isSelected
+                                ? copyGridValue(cellId, row[column.columnName])
+                                : undefined
+                            }
+                            onMouseEnter={
+                              isSelected &&
+                              row[column.columnName] !== null &&
+                              row[column.columnName] !== undefined
+                                ? () =>
+                                    showCellTooltipLater(
+                                      cellId,
+                                      row[column.columnName],
+                                    )
+                                : undefined
+                            }
+                            onMouseLeave={hideCellTooltip}
+                            onFocus={
+                              isSelected &&
+                              row[column.columnName] !== null &&
+                              row[column.columnName] !== undefined
+                                ? () =>
+                                    showCellTooltipLater(
+                                      cellId,
+                                      row[column.columnName],
+                                    )
+                                : undefined
+                            }
+                            onBlur={hideCellTooltip}
+                          >
+                            <span className="dataGridContent">
+                              {row[column.columnName] === null ? (
+                                <span className="nullValue">NULL</span>
+                              ) : (
+                                String(row[column.columnName] ?? "")
+                              )}
+                            </span>
+                            {copiedCellId === cellId ? (
+                              <span className="copyBubble">
+                                <Copy size={12} />
+                                Copied
+                              </span>
+                            ) : null}
+                            {hoveredCell?.id === cellId &&
+                            copiedCellId !== cellId ? (
+                              <span className="cellTooltip">
+                                {hoveredCell.text}
+                              </span>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                      <div
+                        className="dataGridCell dataGridFillerCell"
+                        role="presentation"
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </section>
       </form>
 
