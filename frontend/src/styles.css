@@ -20,7 +20,11 @@
   --primaryRing: rgba(228, 93, 63, 0.24);
   --primaryBorder: rgba(228, 93, 63, 0.4);
   --appBackground:
-    radial-gradient(circle at top left, rgba(228, 93, 63, 0.1), transparent 34rem),
+    radial-gradient(
+      circle at top left,
+      rgba(228, 93, 63, 0.1),
+      transparent 34rem
+    ),
     linear-gradient(135deg, #ffffff 0%, #f4f5f6 46%, #fff7f4 100%);
   --ink: var(--black);
   --muted: #6b6b6b;
@@ -39,9 +43,21 @@
   --scrollThumbHover: rgba(228, 93, 63, 0.55);
   --scrollTrack: rgba(24, 24, 24, 0.04);
   --selectOption: #ffffff;
-  --tableFade: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.64));
-  --panelFade: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.86));
+  --tableFade: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0),
+    rgba(255, 255, 255, 0.64)
+  );
+  --panelFade: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0),
+    rgba(255, 255, 255, 0.86)
+  );
   --controlHover: rgba(255, 122, 102, 0.1);
+  --modeTabsBackground: rgba(24, 24, 24, 0.075);
+  --modeTabActiveBackground: var(--surfaceSolid);
+  --modeTabActiveInk: var(--black);
+  --modeTabActiveAccent: var(--primary);
   --typeSoft: rgba(76, 175, 80, 0.11);
   --typeLine: rgba(76, 175, 80, 0.22);
   --typeInk: #2f7d32;
@@ -66,8 +82,17 @@ html[data-theme="dark"] {
   --primaryRing: rgba(228, 93, 63, 0.32);
   --primaryBorder: rgba(255, 122, 102, 0.38);
   --appBackground:
-    radial-gradient(circle at top left, rgba(228, 93, 63, 0.16), transparent 32rem),
-    linear-gradient(135deg, var(--blackDark) 0%, var(--black) 48%, var(--blackLight) 100%);
+    radial-gradient(
+      circle at top left,
+      rgba(228, 93, 63, 0.16),
+      transparent 32rem
+    ),
+    linear-gradient(
+      135deg,
+      var(--blackDark) 0%,
+      var(--black) 48%,
+      var(--blackLight) 100%
+    );
   --ink: var(--white);
   --muted: var(--whiteDarker);
   --line: rgba(230, 230, 230, 0.1);
@@ -85,9 +110,21 @@ html[data-theme="dark"] {
   --scrollThumbHover: rgba(255, 122, 102, 0.62);
   --scrollTrack: rgba(230, 230, 230, 0.05);
   --selectOption: var(--blackLight);
-  --tableFade: linear-gradient(180deg, rgba(36, 36, 36, 0), rgba(36, 36, 36, 0.7));
-  --panelFade: linear-gradient(180deg, rgba(36, 36, 36, 0), rgba(36, 36, 36, 0.86));
+  --tableFade: linear-gradient(
+    180deg,
+    rgba(36, 36, 36, 0),
+    rgba(36, 36, 36, 0.7)
+  );
+  --panelFade: linear-gradient(
+    180deg,
+    rgba(36, 36, 36, 0),
+    rgba(36, 36, 36, 0.86)
+  );
   --controlHover: rgba(255, 122, 102, 0.12);
+  --modeTabsBackground: var(--field);
+  --modeTabActiveBackground: var(--surfaceSolid);
+  --modeTabActiveInk: var(--primary);
+  --modeTabActiveAccent: var(--primary);
   --typeSoft: rgba(76, 175, 80, 0.14);
   --typeLine: rgba(76, 175, 80, 0.28);
   --typeInk: #87d98a;
@@ -136,7 +173,8 @@ body {
 
 *::-webkit-scrollbar-thumb:hover {
   background:
-    linear-gradient(var(--scrollThumbHover), var(--scrollThumbHover)) padding-box,
+    linear-gradient(var(--scrollThumbHover), var(--scrollThumbHover))
+      padding-box,
     transparent border-box;
 }
 
@@ -472,13 +510,13 @@ select:focus {
 
 .brandIcon {
   display: grid;
-  width: 38px;
-  height: 38px;
+  width: 50px;
+  height: 50px;
   flex: 0 0 auto;
   place-items: center;
-  border: 1px solid var(--primaryBorder);
-  border-radius: 14px;
-  background: var(--primarySoft);
+  border: 0;
+  border-radius: 13px;
+  background: transparent;
   color: var(--primary);
   overflow: hidden;
 }
@@ -631,9 +669,9 @@ select:focus {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 6px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--lineStrong);
   border-radius: 14px;
-  background: var(--field);
+  background: var(--modeTabsBackground);
   padding: 4px;
 }
 
@@ -655,9 +693,15 @@ select:focus {
 
 .modeTabActive,
 .modeTabActive:hover:not(:disabled) {
-  background: var(--surfaceSolid);
-  color: var(--primary);
-  box-shadow: var(--shadowSoft);
+  background: var(--modeTabActiveBackground);
+  color: var(--modeTabActiveInk);
+  box-shadow:
+    var(--shadowSoft),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.modeTabActive svg {
+  color: var(--modeTabActiveAccent);
 }
 
 .modeTab:disabled {
@@ -864,7 +908,7 @@ select:focus {
   max-width: none;
   font-size: 9px;
   line-height: 1;
-  padding: 2px 5px;
+  padding: 3px 7px;
 }
 
 .filters::after {
@@ -1046,7 +1090,8 @@ select:focus {
 
 .tableWrap::-webkit-scrollbar-thumb:hover {
   background:
-    linear-gradient(var(--scrollThumbHover), var(--scrollThumbHover)) padding-box,
+    linear-gradient(var(--scrollThumbHover), var(--scrollThumbHover))
+      padding-box,
     transparent border-box;
   background-clip: padding-box, border-box;
 }
@@ -1087,13 +1132,7 @@ select:focus {
   min-width: 100%;
   flex-direction: column;
   cursor: default;
-  font-family:
-    Montserrat,
-    Aptos,
-    Inter,
-    ui-sans-serif,
-    system-ui,
-    sans-serif;
+  font-family: Montserrat, Aptos, Inter, ui-sans-serif, system-ui, sans-serif;
   font-size: 13px;
   transform: translateY(0);
   transition:
@@ -1293,11 +1332,7 @@ select:focus {
     0 10px 24px rgba(0, 0, 0, 0.16),
     0 0 0 1px rgba(255, 255, 255, 0.08);
   color: var(--ink);
-  font-family:
-    Inter,
-    ui-sans-serif,
-    system-ui,
-    sans-serif;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
   font-size: 11px;
   font-weight: 700;
   padding: 5px 8px;

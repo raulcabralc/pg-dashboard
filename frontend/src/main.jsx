@@ -16,12 +16,12 @@ import {
   Plus,
   Rows3,
   Search,
-  Send,
   SlidersHorizontal,
   Sparkles,
   Sun,
   Trash2,
   X,
+  Zap,
 } from "lucide-react";
 import toast, { Toaster } from "react-hot-toast";
 import brandIconUrl from "./pg-dashboard-icon.png";
@@ -722,8 +722,10 @@ function App() {
   const [functionRows, setFunctionRows] = useState([]);
   const [hasRunFunction, setHasRunFunction] = useState(false);
   const [isExecutingFunction, setIsExecutingFunction] = useState(false);
-  const [isFunctionResultScrolledToBottom, setIsFunctionResultScrolledToBottom] =
-    useState(true);
+  const [
+    isFunctionResultScrolledToBottom,
+    setIsFunctionResultScrolledToBottom,
+  ] = useState(true);
   const copiedTimeoutRef = useRef(null);
   const hoverTimeoutRef = useRef(null);
   const queryTransitionTimeoutRef = useRef(null);
@@ -815,8 +817,27 @@ function App() {
     return value;
   }
 
+  function isMissingFunctionValue(parameter, index) {
+    const value = functionValues[getFunctionParameterKey(parameter, index)];
+
+    return (
+      value === null ||
+      value === undefined ||
+      (typeof value === "string" && value.trim() === "")
+    );
+  }
+
+  const hasMissingFunctionParameters = functionParameters.some(
+    isMissingFunctionValue,
+  );
+
   async function executeFunction() {
     if (!selectedFunctionName) {
+      return;
+    }
+
+    if (hasMissingFunctionParameters) {
+      toast.warning("Fill all function parameters before executing.");
       return;
     }
 
@@ -1102,7 +1123,8 @@ function App() {
     const frameId = window.requestAnimationFrame(() => {
       if (functionResultWrapRef.current) {
         const element = functionResultWrapRef.current;
-        const hasVerticalScroll = element.scrollHeight > element.clientHeight + 2;
+        const hasVerticalScroll =
+          element.scrollHeight > element.clientHeight + 2;
         const isAtBottom =
           element.scrollTop + element.clientHeight >= element.scrollHeight - 2;
 
@@ -1537,7 +1559,7 @@ function App() {
                 onError={() => setBrandImageFailed(true)}
               />
             ) : (
-              <Database size={18} />
+              <Database size={24} />
             )}
           </div>
           <div>
@@ -1948,11 +1970,20 @@ function App() {
                 <button
                   className="primary buttonWithIcon"
                   type="button"
-                  disabled={!selectedFunctionName || isExecutingFunction}
+                  disabled={
+                    !selectedFunctionName ||
+                    isExecutingFunction ||
+                    hasMissingFunctionParameters
+                  }
                   onClick={executeFunction}
+                  title={
+                    hasMissingFunctionParameters
+                      ? "Fill all function parameters before executing"
+                      : "Execute function"
+                  }
                 >
-                  <Send size={16} />
-                  {isExecutingFunction ? "Executing..." : "Execute Function"}
+                  <Zap size={16} />
+                  Execute
                 </button>
               </div>
             </div>

@@ -69,6 +69,14 @@ async function assertFunctionAllowed(pool, functionName, schemaName) {
   }
 }
 
+function isMissingFunctionParameter(value) {
+  return (
+    value === null ||
+    value === undefined ||
+    (typeof value === "string" && value.trim() === "")
+  );
+}
+
 /**
  * @param {import('../index').PgDashboardConfig} config
  */
@@ -248,6 +256,16 @@ function createDashboardRouter(config = {}) {
         throw new BadRequestError(
           `Function expects ${expectedParameters.length} parameters.`,
         );
+      }
+
+      const missingParameterIndex = parameters.findIndex(isMissingFunctionParameter);
+
+      if (missingParameterIndex !== -1) {
+        const missingParameter = expectedParameters[missingParameterIndex];
+        const parameterName =
+          missingParameter.parameterName || `parameter ${missingParameterIndex + 1}`;
+
+        throw new BadRequestError(`${parameterName} is required.`);
       }
 
       const placeholders = parameters.map((_, index) => `$${index + 1}`);
