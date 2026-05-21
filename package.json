@@ -1,6 +1,6 @@
 {
   "name": "pg-dashboard",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Plug-and-play PostgreSQL dashboard middleware for Express.",
   "main": "backend/index.js",
   "types": "backend/index.d.ts",

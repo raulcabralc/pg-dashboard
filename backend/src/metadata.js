@@ -344,6 +344,8 @@ async function listFunctionParameters(pool, functionName, schemaName = "public")
       SELECT
         p.parameter_name AS "parameterName",
         p.data_type AS "dataType",
+        p.udt_schema AS "udtSchema",
+        p.udt_name AS "udtName",
         p.parameter_mode AS "parameterMode",
         p.ordinal_position AS "ordinalPosition"
       FROM information_schema.routines r
@@ -357,13 +359,28 @@ async function listFunctionParameters(pool, functionName, schemaName = "public")
     [schemaName, functionName],
   );
 
-  return result.rows.filter(
-    (parameter) =>
+  const enumValuesByType = await getEnumValues(pool, schemaName);
+
+  return result.rows
+    .filter(
+      (parameter) =>
       parameter.ordinalPosition > 0 &&
       (parameter.parameterMode === "IN" ||
         parameter.parameterMode === "INOUT" ||
         parameter.parameterMode === null),
-  );
+    )
+    .map((parameter) => {
+      const enumValues =
+        enumValuesByType[
+          `${parameter.udtSchema || schemaName}.${parameter.udtName}`
+        ] || [];
+
+      return {
+        ...parameter,
+        isEnum: enumValues.length > 0,
+        enumValues,
+      };
+    });
 }
 
 module.exports = {

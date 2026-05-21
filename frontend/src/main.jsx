@@ -2013,7 +2013,26 @@ function App() {
                         <span>
                           {parameter.parameterName || `parameter ${index + 1}`}
                         </span>
-                        {parameter.dataType === "boolean" ? (
+                        {parameter.isEnum ? (
+                          <CustomDropdown
+                            ariaLabel={`${parameterKey} value`}
+                            value={String(value)}
+                            options={[
+                              { value: "", label: "Select value" },
+                              ...(parameter.enumValues || []).map(
+                                (enumValue) => ({
+                                  value: enumValue,
+                                  label: enumValue,
+                                }),
+                              ),
+                            ]}
+                            onChange={(nextValue) =>
+                              updateFunctionValue(parameter, index, nextValue)
+                            }
+                            placeholder="Value"
+                            disabled={isDashboardDisabled}
+                          />
+                        ) : parameter.dataType === "boolean" ? (
                           <CustomDropdown
                             ariaLabel={`${parameterKey} value`}
                             value={String(value)}
@@ -2049,7 +2068,9 @@ function App() {
                           />
                         )}
                         <small className="typePill">
-                          {formatDataType(parameter.dataType)}
+                          {parameter.isEnum
+                            ? formatDataType(parameter.udtName)
+                            : formatDataType(parameter.dataType)}
                         </small>
                       </label>
                     );

@@ -80,6 +80,28 @@ function assertEnumValues(crudMetadata, values = {}) {
   }
 }
 
+function assertFunctionEnumValues(parametersMetadata, values = []) {
+  parametersMetadata.forEach((parameter, index) => {
+    if (!parameter.isEnum) {
+      return;
+    }
+
+    const value = values[index];
+
+    if (value === null || value === "") {
+      return;
+    }
+
+    if (!parameter.enumValues.includes(value)) {
+      const parameterName = parameter.parameterName || `parameter ${index + 1}`;
+
+      throw new BadRequestError(
+        `${parameterName} must be one of: ${parameter.enumValues.join(", ")}.`,
+      );
+    }
+  });
+}
+
 async function assertFunctionAllowed(pool, functionName, schemaName) {
   const functions = await listFunctions(pool, schemaName);
 
@@ -320,6 +342,8 @@ function createDashboardRouter(config = {}) {
 
         throw new BadRequestError(`${parameterName} is required.`);
       }
+
+      assertFunctionEnumValues(expectedParameters, parameters);
 
       const placeholders = parameters.map((_, index) => `$${index + 1}`);
       const qualifiedFunctionName = `${quoteIdentifier(schemaName)}.${quoteIdentifier(functionName)}`;

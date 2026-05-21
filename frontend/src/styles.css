@@ -1790,6 +1790,7 @@ select:focus {
 @media (max-width: 860px) {
   body {
     overflow: auto;
+    overflow-x: hidden;
   }
 
   .shell {
@@ -1805,13 +1806,35 @@ select:focus {
   }
 
   .toolbarActions {
-    align-items: stretch;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
+    align-items: stretch;
   }
 
   .toolbar {
-    padding: 14px 16px;
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .brandBlock {
+    width: 100%;
+  }
+
+  .brandIcon {
+    width: 42px;
+    height: 42px;
+  }
+
+  .toolbar h1 {
+    font-size: 18px;
+  }
+
+  .toolbar p {
+    max-width: calc(100vw - 86px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .resultMeta,
@@ -1819,20 +1842,194 @@ select:focus {
     flex: 1 1 auto;
   }
 
+  .resultMeta {
+    grid-column: 1 / -1;
+    justify-content: center;
+    min-width: 0;
+  }
+
+  .limitControl,
+  .exportMenu,
+  .exportTrigger,
+  .toolbarActions > .iconButton,
+  .toolbarActions > .primary {
+    width: 100%;
+  }
+
+  .limitControl {
+    justify-content: space-between;
+  }
+
   .layout {
     grid-template-columns: 1fr;
+    gap: 12px;
     overflow: visible;
-    padding: 16px;
+    padding: 12px;
   }
 
   .panel {
     height: auto;
     max-height: none;
     overflow: visible;
+    border-radius: 16px;
+    padding: 12px;
   }
 
   .checkList {
-    max-height: 260px;
+    max-height: 220px;
+  }
+
+  .filters {
+    max-height: 360px;
+  }
+
+  .functionParamList,
+  .filterList {
+    max-height: 280px;
+  }
+
+  .workspace {
+    min-height: 360px;
+  }
+
+  .tableWrap {
+    min-height: 360px;
+    max-height: 68dvh;
+    border-radius: 16px;
+    clip-path: inset(0 round 16px);
+  }
+
+  .tableWrap::-webkit-scrollbar {
+    width: 14px;
+    height: 14px;
+  }
+
+  .tableWrap::-webkit-scrollbar-track {
+    margin: 14px;
+  }
+
+  .dataGrid {
+    font-size: 12px;
+  }
+
+  .dataGridCell {
+    flex-basis: 150px;
+    width: 150px;
+    max-width: 150px;
+    padding: 10px 11px;
+  }
+
+  .dataGridActionCell {
+    flex-basis: 96px;
+    width: 96px;
+    max-width: 96px;
+  }
+
+  .rowActions {
+    gap: 4px;
+  }
+
+  .rowActions .iconButton {
+    width: 28px;
+    min-width: 28px;
+    min-height: 28px;
+  }
+
+  .emptyQueryState {
+    padding: 24px;
+    text-align: center;
+  }
+
+  .crudDrawer {
+    width: 100vw;
+    padding: 16px 12px;
+  }
+
+  .dateTimeField {
+    grid-template-columns: 1fr;
+  }
+
+  .drawerActions {
+    flex-direction: column-reverse;
+  }
+
+  .drawerActions button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 520px) {
+  .toolbarActions {
+    grid-template-columns: 1fr;
+  }
+
+  .resultMeta {
+    justify-content: flex-start;
+  }
+
+  .resultMeta,
+  .limitControl {
+    min-height: 34px;
+    font-size: 12px;
+  }
+
+  .moreRowsBadge,
+  .allRowsBadge {
+    font-size: 10px;
+    padding: 3px 7px;
+  }
+
+  .modeTabs {
+    gap: 4px;
+    padding: 3px;
+  }
+
+  .modeTab {
+    min-height: 34px;
+  }
+
+  .filtersHeader {
+    gap: 8px;
+  }
+
+  .filtersActions {
+    width: 100%;
+  }
+
+  .filtersActions .iconButton {
+    flex: 1 1 0;
+  }
+
+  .filterValueRow {
+    grid-template-columns: minmax(0, 1fr) 34px;
+  }
+
+  .tableWrap {
+    min-height: 340px;
+    max-height: 64dvh;
+  }
+
+  .dataGridCell {
+    flex-basis: 132px;
+    width: 132px;
+    max-width: 132px;
+    padding: 9px 10px;
+  }
+
+  .dataGridActionCell {
+    flex-basis: 88px;
+    width: 88px;
+    max-width: 88px;
+  }
+
+  .dashboardToast {
+    width: calc(100vw - 24px);
+    min-width: 0;
+  }
+
+  .customSelectMenu,
+  .exportMenuList {
+    max-width: calc(100vw - 48px);
   }
 }
 

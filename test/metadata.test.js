@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
   getCrudMetadata,
+  listFunctionParameters,
   listRelations,
   listTables,
 } = require("../backend/src/metadata");
@@ -109,4 +110,55 @@ test("getCrudMetadata maps postgres enum values", async () => {
 
   assert.equal(metadata.columns[0].isEnum, true);
   assert.deepEqual(metadata.columns[0].enumValues, ["ativo", "inativo"]);
+});
+
+test("listFunctionParameters maps postgres enum values", async () => {
+  const pool = {
+    query: async (sql) => {
+      if (sql.includes("FROM information_schema.routines") && sql.includes("routine_name AS")) {
+        return {
+          rows: [{ routineName: "buscar_pets", returnType: "record" }],
+        };
+      }
+
+      if (sql.includes("JOIN information_schema.parameters")) {
+        return {
+          rows: [
+            {
+              parameterName: "status",
+              dataType: "USER-DEFINED",
+              udtSchema: "public",
+              udtName: "pet_status",
+              parameterMode: "IN",
+              ordinalPosition: 1,
+            },
+          ],
+        };
+      }
+
+      if (sql.includes("FROM pg_catalog.pg_type")) {
+        return {
+          rows: [
+            {
+              enumSchema: "public",
+              enumName: "pet_status",
+              enumValue: "ativo",
+            },
+            {
+              enumSchema: "public",
+              enumName: "pet_status",
+              enumValue: "inativo",
+            },
+          ],
+        };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  const parameters = await listFunctionParameters(pool, "buscar_pets");
+
+  assert.equal(parameters[0].isEnum, true);
+  assert.deepEqual(parameters[0].enumValues, ["ativo", "inativo"]);
 });
