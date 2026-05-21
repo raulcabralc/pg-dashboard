@@ -61,6 +61,42 @@ app.listen(3000, () => {
 
 Open `/admin/db` in the browser.
 
+## NestJS Usage
+
+PG Dashboard works with NestJS when your Nest app uses the default Express adapter.
+
+Install the package and make sure `express` is available in the host app:
+
+```bash
+npm install pg-dashboard express
+```
+
+Import `PgDashboardModule` from `pg-dashboard/nestjs` and register it in any module:
+
+```ts
+import { Module } from "@nestjs/common";
+import { PgDashboardModule } from "pg-dashboard/nestjs";
+
+@Module({
+  imports: [
+    PgDashboardModule.register({
+      route: "/admin/db",
+      connectionString: process.env.DATABASE_URL,
+      schemaName: process.env.PG_DASHBOARD_SCHEMA || "public",
+      enableCrud: false,
+      enableFunctions: false,
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+Open `/admin/db` in the browser.
+
+The NestJS integration is exposed through a separate subpath, so Express-only users do not need NestJS installed.
+
+If your Nest app uses Fastify, PG Dashboard is not compatible yet because it currently mounts an Express router.
+
 ## Configuration
 
 All configuration keys use camelCase.
