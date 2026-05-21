@@ -4,6 +4,14 @@
   "description": "Plug-and-play PostgreSQL dashboard middleware for Express.",
   "main": "backend/index.js",
   "types": "backend/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/raulcabralc/pg-dashboard.git"
+  },
+  "homepage": "https://docs.raulc.dev/docs/pg-dashboard",
+  "bugs": {
+    "url": "https://github.com/raulcabralc/pg-dashboard/issues"
+  },
   "exports": {
     ".": {
       "types": "./backend/index.d.ts",
