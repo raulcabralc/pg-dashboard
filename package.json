@@ -4,14 +4,23 @@
   "description": "Plug-and-play PostgreSQL dashboard middleware for Express.",
   "main": "backend/index.js",
   "types": "backend/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./backend/index.d.ts",
+      "require": "./backend/index.js",
+      "default": "./backend/index.js"
+    }
+  },
   "files": [
     "backend",
     "frontend/dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "test": "node --test",
     "build": "npm --prefix frontend run build",
+    "pack:check": "npm test && npm run build && npm pack --dry-run",
     "prepublishOnly": "npm test && npm run build",
     "example": "node examples/basic-server.js"
   },
@@ -20,9 +29,14 @@
     "express",
     "dashboard",
     "crud",
-    "reports"
+    "reports",
+    "middleware",
+    "admin"
   ],
   "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
   "peerDependencies": {
     "express": ">=4.18.0"
   },

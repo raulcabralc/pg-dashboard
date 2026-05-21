@@ -10,6 +10,7 @@ export interface PgDashboardConfig {
   ssl?: PoolConfig["ssl"];
   schemaName?: string;
   enableCrud?: boolean;
+  enableFunctions?: boolean;
   frontendDistPath?: string;
   jsonLimit?: string;
 }

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  AlertCircle,
   Check,
   ChevronDown,
   Code2,
@@ -532,7 +533,14 @@ function normalizeCrudValue(value, column, mode) {
   return value;
 }
 
-function CustomDropdown({ ariaLabel, value, options, onChange, placeholder }) {
+function CustomDropdown({
+  ariaLabel,
+  value,
+  options,
+  onChange,
+  placeholder,
+  disabled = false,
+}) {
   const [isOpen, setIsOpen] = useState(false);
   const rootRef = useRef(null);
   const selectedOption = options.find((option) => option.value === value);
@@ -558,6 +566,7 @@ function CustomDropdown({ ariaLabel, value, options, onChange, placeholder }) {
         className="customSelectTrigger"
         aria-label={ariaLabel}
         aria-expanded={isOpen}
+        disabled={disabled}
         onClick={() => setIsOpen((currentIsOpen) => !currentIsOpen)}
       >
         <span className="customSelectLabel">
@@ -686,6 +695,7 @@ function App() {
     return localStorage.getItem("pgDashboardTheme") || "light";
   });
   const [databaseName, setDatabaseName] = useState("");
+  const [databaseError, setDatabaseError] = useState("");
   const [appMode, setAppMode] = useState("tables");
   const [relations, setRelations] = useState([]);
   const [selectedTableName, setSelectedTableName] = useState("");
@@ -830,8 +840,13 @@ function App() {
   const hasMissingFunctionParameters = functionParameters.some(
     isMissingFunctionValue,
   );
+  const isDashboardDisabled = Boolean(databaseError);
 
   async function executeFunction() {
+    if (isDashboardDisabled) {
+      return;
+    }
+
     if (!selectedFunctionName) {
       return;
     }
@@ -881,42 +896,84 @@ function App() {
   }, [themeName]);
 
   useEffect(() => {
-    fetch("./api/health")
-      .then((response) =>
-        parseApiResponse(response, "Could not load database info."),
-      )
-      .then((payload) => setDatabaseName(payload.databaseName || ""))
-      .catch(() => setDatabaseName(""));
+    let isMounted = true;
 
-    fetch("./api/tables")
-      .then((response) => parseApiResponse(response, "Could not load tables."))
-      .then((payload) => {
+    async function loadInitialData() {
+      try {
+        const healthResponse = await fetch("./api/health");
+        const healthPayload = await parseApiResponse(
+          healthResponse,
+          "Could not load database info.",
+        );
+
+        if (!isMounted) {
+          return;
+        }
+
+        setDatabaseName(healthPayload.databaseName || "");
+        setDatabaseError("");
+
+        const [tablesResponse, functionsResponse] = await Promise.all([
+          fetch("./api/tables"),
+          fetch("./api/functions"),
+        ]);
+        const tablesPayload = await parseApiResponse(
+          tablesResponse,
+          "Could not load tables.",
+        );
+        const functionsPayload = await parseApiResponse(
+          functionsResponse,
+          "Could not load functions.",
+        );
+
+        if (!isMounted) {
+          return;
+        }
+
         const nextRelations =
-          payload.relations ||
-          (payload.tables || []).map((tableName) => ({
+          tablesPayload.relations ||
+          (tablesPayload.tables || []).map((tableName) => ({
             tableName,
             isView: false,
             relationType: "table",
           }));
+        const nextFunctions = functionsPayload.functions || [];
+
         setRelations(nextRelations);
         setSelectedTableName(nextRelations[0]?.tableName || "");
-      })
-      .catch((error) => toast.error(error.message));
-
-    fetch("./api/functions")
-      .then((response) =>
-        parseApiResponse(response, "Could not load functions."),
-      )
-      .then((payload) => {
-        const nextFunctions = payload.functions || [];
-
         setFunctions(nextFunctions);
         setSelectedFunctionName(nextFunctions[0]?.routineName || "");
+
         if (!nextFunctions.length) {
           setAppMode("tables");
         }
-      })
-      .catch((error) => toast.error(error.message));
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+
+        setDatabaseName("");
+        setDatabaseError(error.message);
+        setRelations([]);
+        setSelectedTableName("");
+        setColumns([]);
+        setSelectedColumnNames([]);
+        setFilters([]);
+        setRows([]);
+        setFunctions([]);
+        setSelectedFunctionName("");
+        setFunctionParameters([]);
+        setFunctionValues({});
+        setFunctionRows([]);
+        toast.error(error.message);
+      }
+    }
+
+    loadInitialData();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -1478,6 +1535,11 @@ function App() {
 
   async function generateReport(event) {
     event?.preventDefault();
+
+    if (isDashboardDisabled) {
+      return;
+    }
+
     const invalidFilter = filters.find((filter) => {
       if (filter.operator === "isNull" || filter.operator === "isNotNull") {
         return false;
@@ -1566,7 +1628,7 @@ function App() {
             <h1>PG Dashboard</h1>
             <p className="brandDatabase">
               <Database size={13} />
-              {databaseName || "Database not loaded"}
+              {databaseError || databaseName || "Database not loaded"}
             </p>
           </div>
         </div>
@@ -1605,6 +1667,7 @@ function App() {
                 aria-label="Row limit"
                 inputMode="numeric"
                 value={rowLimit}
+                disabled={isDashboardDisabled}
                 onChange={(event) =>
                   setRowLimit(event.target.value.replace(/\D/g, "").slice(0, 3))
                 }
@@ -1619,6 +1682,7 @@ function App() {
                 currentThemeName === "dark" ? "light" : "dark",
               )
             }
+            disabled={isDashboardDisabled}
             title={
               themeName === "dark"
                 ? "Switch to light theme"
@@ -1629,7 +1693,8 @@ function App() {
           </button>
           <ExportMenu
             disabled={
-              appMode === "functions" ? !functionRows.length : !rows.length
+              isDashboardDisabled ||
+              (appMode === "functions" ? !functionRows.length : !rows.length)
             }
             onExportCsv={() =>
               downloadCsv(
@@ -1649,7 +1714,7 @@ function App() {
               type="button"
               className="primary buttonWithIcon"
               onClick={openCreateDrawer}
-              disabled={!crudMetadata?.canCreate}
+              disabled={isDashboardDisabled || !crudMetadata?.canCreate}
               title={
                 crudMetadata?.canCreate
                   ? "Create record"
@@ -1676,6 +1741,16 @@ function App() {
         }}
       >
         <aside className="panel">
+          {databaseError ? (
+            <div className="databaseUnavailable">
+              <AlertCircle size={18} />
+              <div>
+                <strong>Database unavailable</strong>
+                <span>Check the connection config to unlock the dashboard.</span>
+              </div>
+            </div>
+          ) : null}
+
           <div className="modeTabs" role="tablist" aria-label="Dashboard mode">
             <button
               type="button"
@@ -1683,6 +1758,7 @@ function App() {
                 appMode === "tables" ? "modeTab modeTabActive" : "modeTab"
               }
               onClick={() => setAppMode("tables")}
+              disabled={isDashboardDisabled}
             >
               <Rows3 size={15} />
               Tables
@@ -1693,7 +1769,7 @@ function App() {
                 appMode === "functions" ? "modeTab modeTabActive" : "modeTab"
               }
               onClick={() => setAppMode("functions")}
-              disabled={!functions.length}
+              disabled={isDashboardDisabled || !functions.length}
               title={
                 functions.length
                   ? "Open functions"
@@ -1715,6 +1791,7 @@ function App() {
                   options={tableOptions}
                   onChange={setSelectedTableName}
                   placeholder="Select table"
+                  disabled={isDashboardDisabled}
                 />
               </div>
 
@@ -1729,6 +1806,7 @@ function App() {
                           column.columnName,
                         )}
                         onChange={() => toggleColumn(column.columnName)}
+                        disabled={isDashboardDisabled}
                       />
                       <span className="checkDot" aria-hidden="true" />
                       <span className="columnName">{column.columnName}</span>
@@ -1751,7 +1829,7 @@ function App() {
                       type="button"
                       className="iconButton clearFiltersButton"
                       onClick={clearFilters}
-                      disabled={!filters.length}
+                      disabled={isDashboardDisabled || !filters.length}
                       title="Clear filters"
                     >
                       <X size={17} />
@@ -1760,6 +1838,7 @@ function App() {
                       type="button"
                       className="iconButton addFilterButton"
                       onClick={addFilter}
+                      disabled={isDashboardDisabled}
                       title="Add filter"
                     >
                       <Plus size={18} />
@@ -1813,6 +1892,7 @@ function App() {
                             updateFilterColumn(index, columnName)
                           }
                           placeholder="Column"
+                          disabled={isDashboardDisabled}
                         />
                         <CustomDropdown
                           ariaLabel="Filter operator"
@@ -1824,6 +1904,7 @@ function App() {
                             updateFilter(index, { operator })
                           }
                           placeholder="Operator"
+                          disabled={isDashboardDisabled}
                         />
                         <div className="filterValueRow">
                           {shouldUseValueDropdown ? (
@@ -1835,6 +1916,7 @@ function App() {
                                 updateFilter(index, { value })
                               }
                               placeholder="Value"
+                              disabled={isDashboardDisabled}
                             />
                           ) : (
                             <input
@@ -1846,6 +1928,7 @@ function App() {
                                 updateFilterValue(index, event.target.value)
                               }
                               disabled={
+                                isDashboardDisabled ||
                                 filter.operator === "isNull" ||
                                 filter.operator === "isNotNull"
                               }
@@ -1855,6 +1938,7 @@ function App() {
                             type="button"
                             className="iconButton dangerButton"
                             onClick={() => removeFilter(index)}
+                            disabled={isDashboardDisabled}
                             title="Remove filter"
                           >
                             <Trash2 size={16} />
@@ -1868,7 +1952,9 @@ function App() {
                 <button
                   className="primary buttonWithIcon"
                   type="submit"
-                  disabled={isLoading || !selectedColumnNames.length}
+                  disabled={
+                    isDashboardDisabled || isLoading || !selectedColumnNames.length
+                  }
                 >
                   <Play size={16} />
                   {isLoading ? "Running..." : "Run"}
@@ -1888,6 +1974,7 @@ function App() {
                   }))}
                   onChange={setSelectedFunctionName}
                   placeholder="Select function"
+                  disabled={isDashboardDisabled}
                 />
               </div>
 
@@ -1939,6 +2026,7 @@ function App() {
                               updateFunctionValue(parameter, index, nextValue)
                             }
                             placeholder="Value"
+                            disabled={isDashboardDisabled}
                           />
                         ) : (
                           <input
@@ -1957,6 +2045,7 @@ function App() {
                               )
                             }
                             placeholder="Value"
+                            disabled={isDashboardDisabled}
                           />
                         )}
                         <small className="typePill">
@@ -1972,6 +2061,7 @@ function App() {
                   type="button"
                   disabled={
                     !selectedFunctionName ||
+                    isDashboardDisabled ||
                     isExecutingFunction ||
                     hasMissingFunctionParameters
                   }
@@ -1991,7 +2081,15 @@ function App() {
         </aside>
 
         <section className="workspace">
-          {appMode === "functions" ? (
+          {databaseError ? (
+            <div className="tableWrap tableWrapAtBottom">
+              <div className="emptyQueryState">
+                <AlertCircle size={22} />
+                <strong>Database unavailable</strong>
+                <span>{databaseError}</span>
+              </div>
+            </div>
+          ) : appMode === "functions" ? (
             <div
               ref={functionResultWrapRef}
               className={[

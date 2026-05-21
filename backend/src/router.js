@@ -3,7 +3,7 @@
 const path = require("path");
 const express = require("express");
 const { Pool } = require("pg");
-const { BadRequestError } = require("./errors");
+const { BadRequestError, ForbiddenError } = require("./errors");
 const {
   buildDeleteQuery,
   buildFindRecordQuery,
@@ -39,6 +39,25 @@ function assertCrudAllowed(crudMetadata, action) {
   if (!crudMetadata[flagName]) {
     throw new BadRequestError(`${action} is not available for this relation.`);
   }
+}
+
+function assertFeatureEnabled(isEnabled, featureName) {
+  if (!isEnabled) {
+    throw new ForbiddenError(`${featureName} is disabled.`);
+  }
+}
+
+function applyCrudConfig(crudMetadata, enableCrud) {
+  if (enableCrud) {
+    return crudMetadata;
+  }
+
+  return {
+    ...crudMetadata,
+    canCreate: false,
+    canUpdate: false,
+    canDelete: false,
+  };
 }
 
 function assertEnumValues(crudMetadata, values = {}) {
@@ -77,6 +96,30 @@ function isMissingFunctionParameter(value) {
   );
 }
 
+function getDatabaseConnectionErrorMessage(error) {
+  const databaseErrorCodes = new Set([
+    "08000",
+    "08001",
+    "08003",
+    "08004",
+    "08006",
+    "28P01",
+    "28000",
+    "3D000",
+    "57P03",
+    "ECONNREFUSED",
+    "ENOTFOUND",
+    "ETIMEDOUT",
+    "EAI_AGAIN",
+  ]);
+
+  if (!databaseErrorCodes.has(error.code)) {
+    return null;
+  }
+
+  return "Could not connect to PostgreSQL. Check connectionString, database name, credentials, host, and port.";
+}
+
 /**
  * @param {import('../index').PgDashboardConfig} config
  */
@@ -102,6 +145,8 @@ function createDashboardRouter(config = {}) {
   const router = express.Router();
   const pool = createPool(config);
   const schemaName = config.schemaName || "public";
+  const enableCrud = Boolean(config.enableCrud);
+  const enableFunctions = Boolean(config.enableFunctions);
   const frontendDistPath =
     config.frontendDistPath || path.resolve(__dirname, "../../frontend/dist");
   const indexPath = path.join(frontendDistPath, "index.html");
@@ -129,6 +174,11 @@ function createDashboardRouter(config = {}) {
 
   router.get("/api/functions", async (req, res, next) => {
     try {
+      if (!enableFunctions) {
+        res.json({ schemaName, functions: [] });
+        return;
+      }
+
       const functions = await listFunctions(pool, schemaName);
       res.json({ schemaName, functions });
     } catch (error) {
@@ -140,6 +190,7 @@ function createDashboardRouter(config = {}) {
     "/api/functions/:functionName/parameters",
     async (req, res, next) => {
       try {
+        assertFeatureEnabled(enableFunctions, "Functions");
         const parameters = await listFunctionParameters(
           pool,
           req.params.functionName,
@@ -173,7 +224,7 @@ function createDashboardRouter(config = {}) {
         req.params.tableName,
         schemaName,
       );
-      res.json(crudMetadata);
+      res.json(applyCrudConfig(crudMetadata, enableCrud));
     } catch (error) {
       next(error);
     }
@@ -237,6 +288,8 @@ function createDashboardRouter(config = {}) {
     try {
       const { functionName, parameters = [] } = req.body || {};
 
+      assertFeatureEnabled(enableFunctions, "Functions");
+
       if (!functionName || typeof functionName !== "string") {
         throw new BadRequestError("functionName is required.");
       }
@@ -299,6 +352,7 @@ function createDashboardRouter(config = {}) {
         req.params.tableName,
         schemaName,
       );
+      assertFeatureEnabled(enableCrud, "CRUD");
       assertCrudAllowed(crudMetadata, "create");
       assertEnumValues(crudMetadata, req.body?.values);
       const query = buildInsertQuery({
@@ -325,6 +379,7 @@ function createDashboardRouter(config = {}) {
         req.params.tableName,
         schemaName,
       );
+      assertFeatureEnabled(enableCrud, "CRUD");
 
       if (!crudMetadata.primaryKeyColumns.length) {
         throw new BadRequestError("Primary key is required to find a record.");
@@ -356,6 +411,7 @@ function createDashboardRouter(config = {}) {
         req.params.tableName,
         schemaName,
       );
+      assertFeatureEnabled(enableCrud, "CRUD");
       assertCrudAllowed(crudMetadata, "update");
       assertEnumValues(crudMetadata, req.body?.values);
       const query = buildUpdateQuery({
@@ -388,6 +444,7 @@ function createDashboardRouter(config = {}) {
         req.params.tableName,
         schemaName,
       );
+      assertFeatureEnabled(enableCrud, "CRUD");
       assertCrudAllowed(crudMetadata, "delete");
       const query = buildDeleteQuery({
         schemaName,
@@ -418,7 +475,7 @@ function createDashboardRouter(config = {}) {
 
   router.use(express.static(frontendDistPath));
 
-  router.get("*", (req, res) => {
+  router.use((req, res) => {
     res.sendFile(indexPath);
   });
 
@@ -428,10 +485,14 @@ function createDashboardRouter(config = {}) {
       return;
     }
 
-    const statusCode = error.statusCode || 500;
+    const databaseConnectionMessage = getDatabaseConnectionErrorMessage(error);
+    const statusCode = databaseConnectionMessage ? 503 : error.statusCode || 500;
+
     res.status(statusCode).json({
       error: {
-        message: statusCode === 500 ? "Internal server error." : error.message,
+        message:
+          databaseConnectionMessage ||
+          (statusCode === 500 ? "Internal server error." : error.message),
       },
     });
   });

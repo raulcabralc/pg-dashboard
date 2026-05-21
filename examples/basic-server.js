@@ -9,11 +9,13 @@ const port = process.env.PORT || 3000;
 const schemaName = process.env.PG_DASHBOARD_SCHEMA || "public";
 
 if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL is required. Add it to .env or set it before running npm run example.");
+  throw new Error(
+    "DATABASE_URL is required. Add it to .env or set it before running npm run example.",
+  );
 }
 
 app.get("/", (req, res) => {
-  res.send('<a href="/admin/db">Open PG Interactive Dashboard</a>');
+  res.send('<a href="/admin/db">Open PG Dashboard</a>');
 });
 
 app.use(

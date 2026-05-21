@@ -259,6 +259,12 @@ button:disabled {
   opacity: 0.55;
 }
 
+input:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 select,
 input,
 textarea {
@@ -544,6 +550,39 @@ select:focus {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+.databaseUnavailable {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid rgba(242, 95, 76, 0.28);
+  border-radius: 14px;
+  background: rgba(242, 95, 76, 0.1);
+  color: var(--error);
+  padding: 12px;
+}
+
+.databaseUnavailable svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.databaseUnavailable div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.databaseUnavailable strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.databaseUnavailable span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .resultMeta,
